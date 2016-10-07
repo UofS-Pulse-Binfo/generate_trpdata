@@ -66,8 +66,9 @@ function trpdata_get_default_organism($options = array()) {
  * @param $options
  *   An array of options describing what kind and how many stocks you
  *   want to generate. The following options are supported:
- *     - num: the number of stocks to generate (Default=1)
+ *     - num: the number of stocks to generate (Default=1).
  *     - country: the name of the country to restrict names to.
+ *     - insert: wether the stocks created should be inserted (Default=FALSE).
  *
  * @return
  *   An array of stock objects keyed by stock_id.
@@ -98,11 +99,11 @@ function generate_chado_stock($values, $options) {
 
     // Decode the JSON to an associative array.
     $names = json_decode($json);
+    // Handle if we only asked for 1...
+    if (isset($names->name)) $names = array($names);
 
     // For each potential name...
     foreach ($names as $n) {
-
-      if (sizeof($stocks) >= $options['num']) return $stocks;
 
       // Make a two part name.
       $name = $n->name . ' ' . $n->surname;
@@ -144,6 +145,8 @@ function generate_chado_stock($values, $options) {
           $stocks[] = $stock;
         }
       }
+
+      if (sizeof($stocks) >= $options['num']) return $stocks;
     }
   }
 
