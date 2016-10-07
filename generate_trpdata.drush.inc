@@ -153,11 +153,11 @@ function drush_generate_trpdata_generate_genotypes() {
       $r = chado_insert_record('project', $values);
 
       $project_id = $r['project_id'];
-      drush_log('Created a project (' .$values['name'] . ': ' .$project_id.')');
+      drush_log('Created a project (' .$values['name'] . ': ' .$project_id.')', 'success');
     }
     else {
       $project_id = $r[0]->project_id;
-      drush_log('Re-used existing project (' .$values['name'] . ': ' .$project_id.')');
+      drush_log('Re-used existing project (' .$values['name'] . ': ' .$project_id.')', 'success');
     }
 
     // @todo Implement re-use of stocks attached to the current project.
@@ -167,8 +167,8 @@ function drush_generate_trpdata_generate_genotypes() {
     $options = array('num' => $num_samples, 'generate germplasm' => TRUE);
     $samples = generate_nd_samples($options);
     $sample_ids = array_keys($samples);
-    if (sizeof($samples)) { drush_log('Created '.sizeof($samples).' samples to attach genotypes to.', 'success'); }
-    else { return drush_set_error('Unable to insert samples.'); }
+    if (sizeof($samples)) { drush_log(" - Created ".sizeof($samples).' samples to attach genotypes to.', 'success'); }
+    else { return drush_set_error("\tUnable to insert samples."); }
 
     //--------------------
     // Genotypes
@@ -198,10 +198,52 @@ function drush_generate_trpdata_generate_genotypes() {
 
       }
     }
-    if (sizeof($genotypes)) { drush_log(sizeof($genotypes).' SNP genotypes available.', 'success'); }
-    else { return drush_set_error('Unable to find or insert genotypes.'); }
+    if (sizeof($genotypes)) { drush_log(" - " . sizeof($genotypes).' SNP genotypes available.', 'success'); }
+    else { return drush_set_error("\tUnable to find or insert genotypes."); }
 
+    //=======================
+    // Now handle each chromosome separately
+    print "\nNow starting with the remaining data one chromosome at a time ($start_chr_num to $max_chr_num).\n";
 
+    $organism_id = trpdata_get_default_organism(array('id only' => TRUE));
+
+    for($chr_num=$start_chr_num; $chr_num <= $max_chr_num; $chr_num++) {
+
+      // Determine the name of the chromosome and pick a random start position.
+      $chr = 'Chr' . $chr_num;
+      $pos = rand(1,300);
+      print "\nGenerating data for $chr...\n";
+
+      //--------------------
+      // Chromosome.
+      print " - Creating the chromosome.\n";
+      $values = array(
+        'name' => $chr,
+        'uniquename' => $chr,
+        'organism_id' => $organism_id,
+        'type_id' => array(
+          'name' => 'chromosome',
+          'cv_id' => array('name' => 'sequence'),
+        ),
+      );
+      $r = chado_insert_record('feature', $values);
+      $chr_id = $r['feature_id'];
+
+      //--------------------
+      // Variants/Markers.
+      $options = array(
+        'num_per_chr' => $num_per_chr,
+        'chr' => $chr,
+        'out_stub' => $out_stub,
+        'organism_id' => $organism_id,
+        'project_id' => $project_id,
+      );
+      generate_nd_markers($options);
+
+      //---------------------
+      // Genotype Calls.
+      // Readt to start here!
+    }
   }
   catch (Exception $e) {
     $transaction->rollback();

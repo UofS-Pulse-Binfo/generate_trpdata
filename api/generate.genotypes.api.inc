@@ -5,6 +5,115 @@
  */
 
 /**
+ * Generate Markers (Type=genetic_marker) and optionally variants (Type=SNP).
+ *
+ * @param $options
+ *   An array of options describing what kind and how many markers you
+ *   want to generate. The following options are supported:
+ *     - num: the number of markers to generate (Default=1)
+ *
+ * @return
+ *   An array keyed with marker feature_id where each item is an array with
+ *   a marker and variant object.
+ */
+function generate_nd_markers($options) {
+  $copy_chunk_size = 50000;
+
+  // Define the defaults.
+  if (!isset($options['chr'])) return FALSE;
+  if (!isset($options['num_per_chr'])) $options['num_per_chr'] = 1;
+  if (!isset($options['out_stub'])) $options['out_stub'] = '/tmp/massive_genotype_dataset.drush';
+  if (!isset($options['organism_id'])) $options['organism_id'] = trpdata_get_default_organism(array('id only' => TRUE));
+  $marker_type = 'Exome Capture';
+  $marker_stub = 'exome_' . date('YMd');
+
+  // Retieve the types.
+  $marker_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='genetic_marker'")->fetchField();
+  $options['marker_type_id'] = $marker_type_id;
+  $variant_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='SNP'")->fetchField();
+
+  $feature_file = $options['out_stub'] . '.feature.csv';
+  $FEATURE = fopen($feature_file, 'w');
+  print " - Feature table: markers and variants...\n";
+
+  // Now generate variants/markers for that chromosome.
+  for($num=1; $num <= $options['num_per_chr']; $num++) {
+
+    // Determine the current position and marker name.
+    $offset = rand(1,99);
+    $pos = $pos + $offset;
+    $variant = $options['chr'] . 'p' . $pos;
+    $marker = $options['chr'] . 'p' . $pos . '_' . $marker_stub;
+
+    // One line for the variant.
+    fputcsv($FEATURE, array(
+      $options['organism_id'], // organism_id
+      $variant, // name
+      $variant, // uniquename
+      $variant_type_id, // type_id
+    ));
+    // And one line for the marker.
+    fputcsv($FEATURE, array(
+      $options['organism_id'], // organism_id
+      $variant, // name
+      $marker, // uniquename
+      $marker_type_id, // type_id
+    ));
+
+    // If we have reached the size of a chunk then go ahead and copy it into the db.
+    if ($num%$copy_chunk_size == 0) {
+      fclose($FEATURE);
+      _generate_nd_markers_copy_helper($options, $feature_file);
+      $FEATURE = fopen($feature_file, 'w');
+    }
+
+  }
+  fclose($FEATURE);
+  _generate_nd_markers_copy_helper($options, $feature_file);
+}
+
+function _generate_nd_markers_copy_helper($options, $feature_file) {
+
+  // Now, copy the last chunk of data into the feature table.
+  $num_lines = intval(exec("wc -l '$feature_file'"));
+  drush_log("    - Generated $num_lines markers and variants",'success');
+
+  $num_lines = chado_query("COPY chado.feature (organism_id, name, uniquename, type_id) FROM '$feature_file' WITH CSV")->rowCount();
+  drush_log("    - Saved $num_lines markers and variants to the feature table",'success');
+
+  // Using the COPY File just created, look up the markers just inserted
+  // and attach them to the project.
+  //-------------------------
+  $project_file = $feature_file.'.toproject';
+
+  // We are going to grab the marker uniquenames from the feature_file using LINUX commands.
+  // First grab every other row of the feature file (ie: the lines for the markers).
+  $command = 'sed -n "0~2p" ' . $feature_file
+    // Then grab the third column (ie: the uniquename)
+    . ' | cut -d, -f3 '
+    // Finally collapse the one marker per line into a comma-separated list.
+    . ' | sed -e :a -e "$!N; s/\n/' . "', '" . '/; ta"';
+  // Should look like: Chr1p57_exome_2016Oct07', 'Chr1p85_exome_2016Oct07', 'Chr1p145_exome_2016Oct07
+  $marker_uniquenames = `$command`;
+  $marker_uniquenames = trim($marker_uniquenames);
+
+  // Now use marker uniquenames to Copy them to a file...
+  // The following query will select the feaure_id for the uniquenames in $marker_uniquenames
+  // Alone it should output: 701639,40
+  //                         701641,40
+  //                         701643,40
+  $sql = "SELECT feature_id||',".$options['project_id']."'
+    FROM unnest(ARRAY['$marker_uniquenames']) uniquename
+    JOIN {feature} f USING (uniquename)
+    WHERE f.type_id=:type AND f.organism_id=:organism";
+  // Now use that query with Copy to put the results in a file.
+  chado_query("COPY (".$sql.") TO :file", array(':type' => $options['marker_type_id'], ':organism' => $options['organism_id'], ':file' => $project_file));
+  // And then into the project_feature table.
+  $num_lines = chado_query('COPY project_feature (feature_id, project_id) FROM :file WITH CSV', array(':file' => $project_file))->rowCount();
+  drush_log("    - Linked $num_lines markers to the project via the project_feature table.",'success');
+}
+
+/**
  * Generate Samples (Type=DNA) and optionally germplasm (Type=Accession).
  *
  * Three Cases:
