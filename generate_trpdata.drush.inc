@@ -124,10 +124,14 @@ function drush_generate_trpdata_generate_genotypes() {
   $copy_chunk_size = drush_get_option('chunk-size', 50000);
 
   $marker_type = 'Exome Capture';
-  $marker_stub = 'exome_' . date('YMd');
 
   // Ensure cvterms are present
   // @todo implement this.
+
+  // DELETE LATER!!!
+  chado_query('TRUNCATE {feature} CASCADE');
+  chado_query('TRUNCATE {stock} CASCADE');
+  chado_query('TRUNCATE {project} CASCADE');
 
   //--------------------
   // Project
@@ -159,48 +163,17 @@ function drush_generate_trpdata_generate_genotypes() {
 
   // @todo Implement re-use of stocks attached to the current project.
 
-  // Generate germplasm and samples.
+  //--------------------
+  // Germplasm and Samples.
   print "Generating Samples and Germplasm...\n";
-  $options = array('num' => $num_samples, 'generate germplasm' => TRUE);
+  $options = array('num' => $num_samples, 'insert' => TRUE, 'generate germplasm' => TRUE);
   $samples = generate_nd_samples($options);
-  $sample_ids = array_keys($samples);
   if (sizeof($samples)) { drush_log(" - Created ".sizeof($samples).' samples to attach genotypes to.', 'success'); }
   else { return drush_set_error("\tUnable to insert samples."); }
 
-  //--------------------
-  // Genotypes
-  // Save all the genotype combinations and keep the genotype_ids for later.
-  // Note: Genotype_ids will be looked up if they already exist.
-  print "Ensuring SNP genotypes are available...\n";
-  $alleles = array('A' => 'A', 'T' => 'T', 'C' => 'C', 'G' => 'G');
-  $genotypes = array();
-  foreach ($alleles as $A) {
-    foreach ($alleles as $B) {
-
-      $call = $A . $B;
-      $values = array(
-        'name' => $call,
-        'uniquename' => $call,
-        'description' => $call,
-      );
-      $r = chado_select_record('genotype',array('*'), $values);
-      if (!$r) {
-        $values['type_id'] = $variant_type_id;
-        $r = chado_insert_record('genotype', $values);
-      }
-      else {
-        $r = (array) $r[0];
-      }
-      $genotypes[$call] = $r['genotype_id'];
-
-    }
-  }
-  if (sizeof($genotypes)) { drush_log(" - " . sizeof($genotypes).' SNP genotypes available.', 'success'); }
-  else { return drush_set_error("\tUnable to find or insert genotypes."); }
-
   //=======================
-  // Now handle each chromosome separately
-  print "\nNow starting with the remaining data one chromosome at a time ($start_chr_num to $max_chr_num).\n";
+  // Markers and Variants
+  print "Generating Markers and Variants...\n";
 
   $organism_id = trpdata_get_default_organism(array('id only' => TRUE));
 
@@ -209,11 +182,11 @@ function drush_generate_trpdata_generate_genotypes() {
     // Determine the name of the chromosome and pick a random start position.
     $chr = 'Chr' . $chr_num;
     $pos = rand(1,300);
-    print "\nGenerating data for $chr...\n";
+    print " - Generating markers & variants for $chr...\n";
 
     //--------------------
     // Chromosome.
-    print " - Creating the chromosome.\n";
+    print "   - Creating the chromosome.\n";
     $values = array(
       'name' => $chr,
       'uniquename' => $chr,
@@ -234,12 +207,21 @@ function drush_generate_trpdata_generate_genotypes() {
       'out_stub' => $out_stub,
       'organism_id' => $organism_id,
       'project_id' => $project_id,
+      'marker_type' => $marker_type,
     );
     generate_nd_markers($options);
 
-    //---------------------
-    // Genotype Calls.
-    // Readt to start here!
   }
+
+  //---------------------
+  // Genotype Calls.
+  print "Generating Genotype Calls...\n";
+  $options = array(
+    'alleles' => $alleles,
+    'project_id' => $project_id,
+    'samples' => $samples,
+    'genotype_ids' => $genotypes,
+  );
+  generate_nd_genotype_calls($options);
 
 }
