@@ -9,8 +9,15 @@
  *
  * @param $options
  *   An array of options describing what kind and how many markers you
- *   want to generate. The following options are supported:
+ *   want to generate. The following options are supported (* are required):
  *     - num: the number of markers to generate (Default=1)
+ *     * chr: the current chromosome (ie: Chr1)
+ *     * project_id: the project_id to group markers with
+ *     - num-per-chr: the number of markers to generate for the current chromosome (Default=1,000)
+ *     - out-stub: the full path stub to create copy files with (Default=/tmp/massive_genotype_dataset.drush)
+ *     - organism_id: the organism_id to use for markers and variants (Default=Tripalus databasica)
+ *     - marker_type: the free-text string describing the type of marker (Default=Exome Capture)
+ *     - marker_stub: the suffix to add to variant names to make marker uniquenames (Default=exome_capture_[date])
  *
  * @return
  *   An array keyed with marker feature_id where each item is an array with
@@ -21,11 +28,12 @@ function generate_nd_markers($options) {
 
   // Define the defaults.
   if (!isset($options['chr'])) return FALSE;
-  if (!isset($options['num_per_chr'])) $options['num_per_chr'] = 1;
+  if (!isset($options['project_id'])) return FALSE;
+  if (!isset($options['num_per_chr'])) $options['num_per_chr'] = 1000;
   if (!isset($options['out_stub'])) $options['out_stub'] = '/tmp/massive_genotype_dataset.drush';
   if (!isset($options['organism_id'])) $options['organism_id'] = trpdata_get_default_organism(array('id only' => TRUE));
-  $marker_type = 'Exome Capture';
-  $marker_stub = 'exome_' . date('YMd');
+  if (!isset($options['marker_type'])) $options['marker_type'] = 'Exome Capture';
+  if (!isset($options['marker_stub'])) $options['marker_stub'] = strtolower(str_replace(' ','_', $options['marker_type'])) . '_' . date('YMd');
 
   // Retieve the types.
   $marker_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='genetic_marker'")->fetchField();
@@ -48,7 +56,7 @@ function generate_nd_markers($options) {
     $offset = rand(1,99);
     $pos = $pos + $offset;
     $variant = $options['chr'] . 'p' . $pos;
-    $marker = $options['chr'] . 'p' . $pos . '_' . $marker_stub;
+    $marker = $options['chr'] . 'p' . $pos . '_' . $options['marker_stub'];
 
     // One line for the variant.
     fputcsv($FEATURE, array(
@@ -111,7 +119,7 @@ function _generate_nd_markers_copy_helper($options, $feature_file) {
     $options['project_id'],
     $options['rel_type_id'],
     $options['prop_type_id'],
-    '"Exome Capture"'
+    '"' . $options['marker_type'] . '"'
   )));
 
   // Finally, we execute the copy commands :-).
