@@ -31,6 +31,11 @@ function generate_nd_markers($options) {
   $marker_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='genetic_marker'")->fetchField();
   $options['marker_type_id'] = $marker_type_id;
   $variant_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='SNP'")->fetchField();
+  $options['variant_type_id'] = $variant_type_id;
+  $rel_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='is_marker_of'")->fetchField();
+  $options['rel_type_id'] = $rel_type_id;
+  $prop_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='marker_type'")->fetchField();
+  $options['prop_type_id'] = $prop_type_id;
 
   $feature_file = $options['out_stub'] . '.feature.csv';
   $FEATURE = fopen($feature_file, 'w');
@@ -84,33 +89,41 @@ function _generate_nd_markers_copy_helper($options, $feature_file) {
   // Using the COPY File just created, look up the markers just inserted
   // and attach them to the project.
   //-------------------------
-  $project_file = $feature_file.'.toproject';
+  $markernames_file = $feature_file . '.markers';
+  $variantnames_file = $feature_file . '.variants';
 
-  // We are going to grab the marker uniquenames from the feature_file using LINUX commands.
+  // We are going to grab the marker uniquenames from the feature_file using LINUX commands
+  // and save them to a file for later use.
   // First grab every other row of the feature file (ie: the lines for the markers).
-  $command = 'sed -n "0~2p" ' . $feature_file
-    // Then grab the third column (ie: the uniquename)
-    . ' | cut -d, -f3 '
-    // Finally collapse the one marker per line into a comma-separated list.
-    . ' | sed -e :a -e "$!N; s/\n/' . "', '" . '/; ta"';
-  // Should look like: Chr1p57_exome_2016Oct07', 'Chr1p85_exome_2016Oct07', 'Chr1p145_exome_2016Oct07
-  $marker_uniquenames = `$command`;
-  $marker_uniquenames = trim($marker_uniquenames);
+  system('sed -n "0~2p" '.$feature_file.' > '.$markernames_file);
+  // Then grab the other rows of the feature file (ie: the lines for the variants).
+  system('sed -n "1~2p" '.$feature_file.' > '.$variantnames_file);
 
-  // Now use marker uniquenames to Copy them to a file...
-  // The following query will select the feaure_id for the uniquenames in $marker_uniquenames
-  // Alone it should output: 701639,40
-  //                         701641,40
-  //                         701643,40
-  $sql = "SELECT feature_id||',".$options['project_id']."'
-    FROM unnest(ARRAY['$marker_uniquenames']) uniquename
-    JOIN {feature} f USING (uniquename)
-    WHERE f.type_id=:type AND f.organism_id=:organism";
-  // Now use that query with Copy to put the results in a file.
-  chado_query("COPY (".$sql.") TO :file", array(':type' => $options['marker_type_id'], ':organism' => $options['organism_id'], ':file' => $project_file));
-  // And then into the project_feature table.
-  $num_lines = chado_query('COPY project_feature (feature_id, project_id) FROM :file WITH CSV', array(':file' => $project_file))->rowCount();
-  drush_log("    - Linked $num_lines markers to the project via the project_feature table.",'success');
+  // Now let our helper script pull out the feature_ids for the markers and create
+  // copy files to link them to their project, variant and provide a marker type.
+  $script = drupal_get_path('module','generate_trpdata') . '/includes/generate_nd_markers.helper.sh';
+  system("bash $script ".implode(' ', array(
+    $markernames_file,
+    $options['marker_type_id'],
+    $variantnames_file,
+    $options['variant_type_id'],
+    $options['organism_id'],
+    $options['project_id'],
+    $options['rel_type_id'],
+    $options['prop_type_id'],
+    '"Exome Capture"'
+  )));
+
+  // Finally, we execute the copy commands :-).
+  $num_lines = chado_query("COPY {project_feature} (feature_id, project_id) FROM '$feature_file.markers.project.csv' WITH CSV")->rowCount();
+  drush_log("      - Saved $num_lines links between markers and project (feature_project table)",'success');
+
+  $num_lines = chado_query("COPY {featureprop} (feature_id, type_id, value) FROM '$feature_file.markers.featureprop.csv' WITH CSV")->rowCount();
+  drush_log("      - Saved $num_lines marker type specifications (featureprop table)",'success');
+
+  $num_lines = chado_query("COPY {feature_relationship} (subject_id, object_id, type_id) FROM '$feature_file.markers.relationships.csv' WITH CSV")->rowCount();
+  drush_log("      - Saved $num_lines relationships between markers and variants (feature_relationship table)",'success');
+
 }
 
 /**
