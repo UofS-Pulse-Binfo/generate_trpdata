@@ -37,6 +37,13 @@ PROJECT_FILE="$MARKER_FILE.project.csv"
 PROP_FILE="$MARKER_FILE.featureprop.csv"
 REL_FILE="$MARKER_FILE.relationships.csv"
 
+LOCM="$MARKER_FILE.featureloc.csv"
+LOCM_P="$MARKER_FILE.featureloc.processed.csv"
+LOCV="$VARIANT_FILE.featureloc.csv"
+LOCV_P="$VARIANT_FILE.featureloc.processed.csv"
+MVIEW="$VARIANT_FILE.mview_ndg_variants.csv"
+MVIEW_P="$VARIANT_FILE.mview_ndg_variants.processed.csv"
+
 ## MARKERS
 #############################
 
@@ -75,8 +82,12 @@ sed "s/$/,$PROJECT_ID/" $MARKER_IDS > $PROJECT_FILE
 
 # Feature Property File: link the features to a project
 #echo -n "      - Generating the featureprop copy file: ";
-sed "s/$/,$PROPTYPE_ID,'$MARKER_TYPE'/" $MARKER_IDS > $PROP_FILE
+sed "s/$/,$PROPTYPE_ID,\"$MARKER_TYPE\"/" $MARKER_IDS > $PROP_FILE
 #wc -l $PROP_FILE | cut -f1 -d' '
+
+# Feature Location file: locate the features on the chromosome.
+paste -d',' $LOCM $MARKER_IDS > $LOCM_P
+
 
 ## VARIANTS
 #############################
@@ -104,6 +115,15 @@ echo "  WHERE f.type_id=$VTYPE AND f.organism_id=$ORGANISM;" >> $TMP_QUERY
 PSQL="$(drush sql-connect)"
 $PSQL --no-align --tuples-only < $TMP_QUERY > $VARIANT_IDS
 #wc -l $VARIANT_IDS | cut -f1 -d' '
+
+# Feature Location file: locate the features on the chromosome.
+paste -d',' $LOCV $VARIANT_IDS > $LOCV_P
+
+# Mview file: locate the features on the chromosome.
+if [ -s $MVIEW ]
+then
+  paste -d',' $MVIEW $VARIANT_IDS > $MVIEW_P
+fi
 
 ## RELATIONSHIP
 #############################

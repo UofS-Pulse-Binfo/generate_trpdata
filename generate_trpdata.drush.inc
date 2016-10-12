@@ -40,6 +40,8 @@ function generate_trpdata_drush_command() {
       'project' => 'The name of the project to use. The project will be created if it\'s
         not already and you will be prompted if you would like to use germplasm already
         associated with an existing project.',
+      'marker-type' => 'A free-text string to use as the marker type (Default=Cool Technology).',
+      'load-mviews' => 'If present the ND Genotypes mview_ndg_variants and mviews_ndg_calls will be loaded as the data is generated (Default=FALSE).',
     ),
   );
 
@@ -122,16 +124,23 @@ function drush_generate_trpdata_generate_genotypes() {
   $max_chr_num = $start_chr_num + $num_chr -1;
 
   $copy_chunk_size = drush_get_option('chunk-size', 50000);
-
-  $marker_type = 'Exome Capture';
+  $marker_type = drush_get_option('marker-type','Cool Technology');
+  $load_mviews = drush_get_option('load-mviews', FALSE);
 
   // Ensure cvterms are present
   // @todo implement this.
 
   // DELETE LATER!!!
-  chado_query('TRUNCATE {feature} CASCADE');
-  chado_query('TRUNCATE {stock} CASCADE');
-  chado_query('TRUNCATE {project} CASCADE');
+  // print "Truncating existing data...\n";
+  // chado_query('TRUNCATE {feature} CASCADE');
+  // chado_query('TRUNCATE {stock} CASCADE');
+  // chado_query('TRUNCATE {project} CASCADE');
+  // chado_query('TRUNCATE {mview_ndg_variants}');
+  // chado_query('TRUNCATE {mview_ndg_calls}');
+
+  print "Dropping indexes on materialized views...\n";
+  nd_genotypes_drop_indexes('mview_ndg_calls');
+  nd_genotypes_drop_indexes('mview_ndg_variants');
 
   //--------------------
   // Project
@@ -204,10 +213,12 @@ function drush_generate_trpdata_generate_genotypes() {
     $options = array(
       'num_per_chr' => $num_per_chr,
       'chr' => $chr,
+      'chr_id' => $chr_id,
       'out_stub' => $out_stub,
       'organism_id' => $organism_id,
       'project_id' => $project_id,
       'marker_type' => $marker_type,
+      'load mview' => $load_mviews,
     );
     generate_nd_markers($options);
 
@@ -221,7 +232,23 @@ function drush_generate_trpdata_generate_genotypes() {
     'project_id' => $project_id,
     'samples' => $samples,
     'genotype_ids' => $genotypes,
+    'load mview' => $load_mviews,
   );
   generate_nd_genotype_calls($options);
 
+  if ($load_mviews) {
+    print "Finishing the materialized views...\n";
+
+    // Create the indexes you dropped earlier.
+    print " - Creating Indexes\n";
+    nd_genotypes_create_mview_ndg_calls_indexes();
+
+    // Create the indexes you dropped earlier.
+    print " - Creating Indexes\n";
+    nd_genotypes_create_mview_ndg_variants_indexes();
+
+    // Update the cached lists.
+    print " - Updating cached lists used for select boxes and what-not\n";
+    nd_genotypes_update_mview_cache();
+  }
 }
