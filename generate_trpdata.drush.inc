@@ -45,6 +45,11 @@ function generate_trpdata_drush_command() {
     ),
   );
 
+  $items['generate-phenotypes'] = array(
+    'description' => 'Generate Phenotypic Data.',
+    'aliases' => array('gen-pheno'),
+  );
+
   return $items;
 }
 
@@ -250,5 +255,85 @@ function drush_generate_trpdata_generate_genotypes() {
     // Update the cached lists.
     print " - Updating cached lists used for select boxes and what-not\n";
     nd_genotypes_update_mview_cache();
+  }
+}
+
+/**
+ * Drush Command: Generate Phenotypes
+ */
+function drush_generate_trpdata_generate_phenotypes() {
+
+  // Create phenotypic data for all stocks associated with a given project
+  // for the locations and years specified in the following array.
+  // HARD-CODING FOR NOW TO MAKE QUICKER.
+  $trait_id = 2787;
+  $project_id = 4;
+  $locations = array('Sutherland', 'Kernen Farm');
+  $years = array(2013, 2014);
+
+  $type_ids = array(
+    'location' => 2500,
+    'year' => 2790,
+    'min' => 2791,
+    'max' => 2792,
+    'standard deviation' => 2793,
+  );
+
+  // Header
+  print implode("\t", array('Location', 'Year', 'Line', 'Mean', 'Min', 'Max', 'Std. Dev.')) . "\n";
+
+  // Get the list of stocks.
+  $stocks = chado_query('SELECT s.stock_id, s.name FROM {project_stock} p LEFT JOIN {stock} s USING(stock_id) WHERE project_id=:id LIMIT 5',
+    array(':id' => $project_id))->fetchAllKeyed();
+
+  // Generate data for each location, year, stock combination.
+  foreach ($locations as $location) {
+    foreach ($years as $year) {
+      foreach ($stocks as $stock_id => $stock_name) {
+
+        // Generate quantitate data.
+        $mean = rand(100,300) / 10;
+        $dev = rand(20,50) / 10;
+        $min = $mean - $dev - (rand(10,30)/10);
+        $max = $mean + $dev + (rand(10,30)/10);
+
+        // Print to the dataset file.
+        print implode("\t", array($location, $year, $stock_name, $mean, $min, $max, $dev)) . "\n";
+
+        // Come up with a uniquename for this measurement.
+        $uniquename = implode('_', array($project_id, $location, $year, $stock_id, date('Ymd')));
+
+        // Now, insert him into the database :-).
+        //Phenotype
+        $values = array(
+          ':uniquename' => $uniquename,
+          ':attr_id' => $trait_id,
+          ':value' => $mean,
+          ':project_id' => $project_id,
+          ':stock_id' => $stock_id,
+        );
+        chado_query('INSERT INTO {phenotype} (uniquename, attr_id, value, project_id, stock_id) VALUES (:uniquename, :attr_id, :value, :project_id, :stock_id)',
+          $values);
+        $phenotype_id = chado_query('SELECT phenotype_id FROM {phenotype} WHERE uniquename=:uniquename AND attr_id=:attr_id AND value=:value AND project_id=:project_id AND stock_id=:stock_id',
+          $values)->fetchField();
+
+        // Phenotype Properties
+        $properties = array(
+          $type_ids['location'] => $location,
+          $type_ids['year'] => $year,
+          $type_ids['min'] => $min,
+          $type_ids['max'] => $max,
+          $type_ids['standard deviation'] => $dev
+        );
+        foreach ($properties as $type_id => $value) {
+          $values = array(
+            'phenotype_id' => $phenotype_id,
+            'type_id' => $type_id,
+            'value' => $value
+          );
+          chado_insert_record('phenotypeprop', $values);
+        }
+      }
+    }
   }
 }
