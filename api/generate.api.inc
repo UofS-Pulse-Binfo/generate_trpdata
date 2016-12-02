@@ -88,13 +88,16 @@ function generate_chado_stock($values, $options) {
   // Only try to find enough names 10 times.
   for ($i=0; $i<10; $i++) {
 
+    $num_to_grab = ($options['num'] <= 500) ? $options['num'] : 500;
+
     // Grab a collection of names to use for stocks.
     if (isset($options['country'])) {
-      $url = 'http://uinames.com/api/?gender=female&region=' . $options['country'] . '&amount=' . $options['num'];
+      $url = 'http://uinames.com/api/?gender=female&region=' . $options['country'] . '&amount=' . $num_to_grab;
     }
     else {
-      $url = 'http://uinames.com/api/?gender=female&amount=' . $options['num'];
+      $url = 'http://uinames.com/api/?gender=female&amount=' . $num_to_grab;
     }
+    print "Accessing $url.\n";
     $json = file_get_contents($url);
 
     // Decode the JSON to an associative array.
