@@ -136,16 +136,16 @@ function drush_generate_trpdata_generate_genotypes() {
   // @todo implement this.
 
   // DELETE LATER!!!
-  // print "Truncating existing data...\n";
-  // chado_query('TRUNCATE {feature} CASCADE');
-  // chado_query('TRUNCATE {stock} CASCADE');
-  // chado_query('TRUNCATE {project} CASCADE');
-  // chado_query('TRUNCATE {mview_ndg_variants}');
-  // chado_query('TRUNCATE {mview_ndg_calls}');
+  print "Truncating existing data...\n";
+  chado_query('TRUNCATE {feature} CASCADE');
+  chado_query('TRUNCATE {stock} CASCADE');
+  chado_query('TRUNCATE {project} CASCADE');
+  chado_query('TRUNCATE {mview_ndg_tripalus_variants}');
+  chado_query('TRUNCATE {mview_ndg_tripalus_calls}');
 
   print "Dropping indexes on materialized views...\n";
-  nd_genotypes_drop_indexes('mview_ndg_calls');
-  nd_genotypes_drop_indexes('mview_ndg_variants');
+  nd_genotypes_drop_indexes('mview_ndg_tripalus_calls');
+  nd_genotypes_drop_indexes('mview_ndg_tripalus_variants');
 
   //--------------------
   // Project
@@ -242,19 +242,25 @@ function drush_generate_trpdata_generate_genotypes() {
   generate_nd_genotype_calls($options);
 
   if ($load_mviews) {
+    $partition = 'tripalus';
+
     print "Finishing the materialized views...\n";
 
     // Create the indexes you dropped earlier.
     print " - Creating Indexes\n";
-    nd_genotypes_create_mview_ndg_calls_indexes();
+    nd_genotypes_create_mview_ndg_calls_indexes('mview_ndg_'.$partition.'_calls');
 
     // Create the indexes you dropped earlier.
     print " - Creating Indexes\n";
-    nd_genotypes_create_mview_ndg_variants_indexes();
+    nd_genotypes_create_mview_ndg_variants_indexes('mview_ndg_'.$partition.'_variants');
+
+    // Create the indexes you dropped earlier.
+    print " - Sync'ing genotypes to the mview_ndg_germplasm_genotyped mview...";
+    nd_genotypes_update_mview_ndg_germplasm_genotyped($partition, 5);
 
     // Update the cached lists.
     print " - Updating cached lists used for select boxes and what-not\n";
-    nd_genotypes_update_mview_cache();
+    nd_genotypes_update_mview_cache($partition);
   }
 }
 

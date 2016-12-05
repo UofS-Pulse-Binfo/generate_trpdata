@@ -37,6 +37,7 @@ function generate_nd_genotype_calls($options) {
   $options['observed_total'] = 0;
 
   $featureprop_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='marker_type'")->fetchField();
+  $variant_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='SNP'")->fetchField();
 
   //--------------------
   // Genotypes
@@ -140,13 +141,15 @@ function generate_nd_genotype_calls($options) {
       if ($num%$copy_chunk_size == 0) {
         fclose($CALL); fclose($MVIEW);
 
-        $num_lines = chado_query("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV")->rowCount();
-        $options['observed_total'] = $options['observed_total'] + $num_lines;
-        drush_log(" - Saved $num_lines calls to the genotype_call table (".$options['observed_total']." of ".$options['expected_total'].")",'success');
+        //$num_lines = chado_query("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV")->rowCount();
+        //$options['observed_total'] = $options['observed_total'] + $num_lines;
+        //drush_log(" - Saved $num_lines calls to the genotype_call table (".$options['observed_total']." of ".$options['expected_total'].")",'success');
+        trpdata_remote_copy("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV");
 
         if ($options['load mview']) {
-          $num_lines = chado_query("COPY chado.mview_ndg_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV")->rowCount();
-          drush_log("   - Saved $num_lines calls to the mview_ndg_calls table", 'success');
+          //$num_lines = chado_query("COPY chado.mview_ndg_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV")->rowCount();
+          //drush_log("   - Saved $num_lines calls to the mview_ndg_calls table", 'success');
+          trpdata_remote_copy("COPY chado.mview_ndg_tripalus_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV");
         }
 
         $CALL = fopen($call_file, 'w'); $MVIEW = fopen($mview_file, 'w');
@@ -157,13 +160,15 @@ function generate_nd_genotype_calls($options) {
 
   // Copy in any remaining records.
   fclose($CALL); fclose($MVIEW);
-  $num_lines = chado_query("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV")->rowCount();
-  if ($num_lines == 0) return TRUE;
-  drush_log(" - Saved $num_lines calls to the genotype_call table",'success');
+  //$num_lines = chado_query("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV")->rowCount();
+  //if ($num_lines == 0) return TRUE;
+  //drush_log(" - Saved $num_lines calls to the genotype_call table",'success');
+  trpdata_remote_copy("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV");
 
   if ($options['load mview']) {
-    $num_lines = chado_query("COPY chado.mview_ndg_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV")->rowCount();
-    drush_log("   - Saved $num_lines calls to the mview_ndg_calls table", 'success');
+    //$num_lines = chado_query("COPY chado.mview_ndg_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV")->rowCount();
+    //drush_log("   - Saved $num_lines calls to the mview_ndg_calls table", 'success');
+    trpdata_remote_copy("COPY chado.mview_ndg_tripalus_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV");
   }
 }
 
@@ -318,8 +323,10 @@ function _generate_nd_markers_copy_helper(&$options, $feature_file) {
   $options['observed_total'] = $options['observed_total'] + $num_lines;
   drush_log("   - Generated $num_lines markers and variants (".$options['observed_total']." of ".$options['expected_total'].")",'success');
 
-  $num_lines = chado_query("COPY chado.feature (organism_id, name, uniquename, type_id) FROM '$feature_file' WITH CSV")->rowCount();
-  drush_log("     - Saved $num_lines markers and variants to the feature table",'success');
+  //$num_lines = chado_query("COPY chado.feature (organism_id, name, uniquename, type_id) FROM '$feature_file' WITH CSV")->rowCount();
+  trpdata_remote_copy("COPY chado.feature (organism_id, name, uniquename, type_id) FROM '$feature_file' WITH CSV");
+
+  //drush_log("     - Saved $num_lines markers and variants to the feature table",'success');
 
   // Using the COPY File just created, look up the markers just inserted
   // and attach them to the project.
@@ -350,25 +357,31 @@ function _generate_nd_markers_copy_helper(&$options, $feature_file) {
   )));
 
   // Finally, we execute the copy commands :-).
-  $num_lines = chado_query("COPY {project_feature} (feature_id, project_id) FROM '$feature_file.markers.project.csv' WITH CSV")->rowCount();
-  drush_log("     - Saved $num_lines links between markers and project",'success');
+  //$num_lines = chado_query("COPY {project_feature} (feature_id, project_id) FROM '$feature_file.markers.project.csv' WITH CSV")->rowCount();
+  //drush_log("     - Saved $num_lines links between markers and project",'success');
+  trpdata_remote_copy("COPY chado.project_feature (feature_id, project_id) FROM '$feature_file.markers.project.csv' WITH CSV");
 
-  $num_lines = chado_query("COPY {featureprop} (feature_id, type_id, value) FROM '$feature_file.markers.featureprop.csv' WITH CSV")->rowCount();
-  drush_log("     - Saved $num_lines marker type specifications",'success');
+  //$num_lines = chado_query("COPY {featureprop} (feature_id, type_id, value) FROM '$feature_file.markers.featureprop.csv' WITH CSV")->rowCount();
+  //drush_log("     - Saved $num_lines marker type specifications",'success');
+  trpdata_remote_copy("COPY chado.featureprop (feature_id, type_id, value) FROM '$feature_file.markers.featureprop.csv' WITH CSV");
 
-  $num_lines = chado_query("COPY {featureloc} (srcfeature_id, fmin, fmax, feature_id) FROM '$feature_file.markers.featureloc.processed.csv' WITH CSV")->rowCount();
-  drush_log("     - Saved $num_lines marker locations",'success');
+  //$num_lines = chado_query("COPY {featureloc} (srcfeature_id, fmin, fmax, feature_id) FROM '$feature_file.markers.featureloc.processed.csv' WITH CSV")->rowCount();
+  //drush_log("     - Saved $num_lines marker locations",'success');
+  trpdata_remote_copy("COPY chado.featureloc (srcfeature_id, fmin, fmax, feature_id) FROM '$feature_file.markers.featureloc.processed.csv' WITH CSV");
 
-  $num_lines = chado_query("COPY {featureloc} (srcfeature_id, fmin, fmax, feature_id) FROM '$feature_file.variants.featureloc.processed.csv' WITH CSV")->rowCount();
-  drush_log("     - Saved $num_lines variant locations",'success');
+  //$num_lines = chado_query("COPY {featureloc} (srcfeature_id, fmin, fmax, feature_id) FROM '$feature_file.variants.featureloc.processed.csv' WITH CSV")->rowCount();
+  //drush_log("     - Saved $num_lines variant locations",'success');
+  trpdata_remote_copy("COPY chado.featureloc (srcfeature_id, fmin, fmax, feature_id) FROM '$feature_file.variants.featureloc.processed.csv' WITH CSV");
 
   if ($options['load mview']) {
-    $num_lines = chado_query("COPY {mview_ndg_variants} (variant_name, srcfeature_id, srcfeature_name, fmin, fmax, variant_id) FROM '$feature_file.variants.mview_ndg_variants.processed.csv' WITH CSV")->rowCount();
-    drush_log("     - Saved $num_lines to variants materialized view",'success');
+    //$num_lines = chado_query("COPY {mview_ndg_variants} (variant_name, srcfeature_id, srcfeature_name, fmin, fmax, variant_id) FROM '$feature_file.variants.mview_ndg_variants.processed.csv' WITH CSV")->rowCount();
+    //drush_log("     - Saved $num_lines to variants materialized view",'success');
+    trpdata_remote_copy("COPY chado.mview_ndg_tripalus_variants (variant_name, srcfeature_id, srcfeature_name, fmin, fmax, variant_id) FROM '$feature_file.variants.mview_ndg_variants.processed.csv' WITH CSV");
   }
 
-  $num_lines = chado_query("COPY {feature_relationship} (subject_id, object_id, type_id) FROM '$feature_file.markers.relationships.csv' WITH CSV")->rowCount();
-  drush_log("     - Saved $num_lines relationships between markers and variants",'success');
+  //$num_lines = chado_query("COPY {feature_relationship} (subject_id, object_id, type_id) FROM '$feature_file.markers.relationships.csv' WITH CSV")->rowCount();
+  //drush_log("     - Saved $num_lines relationships between markers and variants",'success');
+  trpdata_remote_copy("COPY chado.feature_relationship (subject_id, object_id, type_id) FROM '$feature_file.markers.relationships.csv' WITH CSV");
 
 }
 
@@ -477,4 +490,17 @@ function generate_nd_samples($options) {
   }
 
   return $stocks;
+}
+
+/**
+ *
+ */
+function trpdata_remote_copy($copy_command) {
+
+  $connection_string = `drush sql-connect`;
+  $connection_string = trim($connection_string);
+
+  $command = $connection_string . ' -c "\\' . $copy_command . '"';
+  return `$command`;
+
 }
