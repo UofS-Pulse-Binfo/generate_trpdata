@@ -42,6 +42,7 @@ function generate_trpdata_drush_command() {
         associated with an existing project.',
       'marker-type' => 'A free-text string to use as the marker type (Default=Cool Technology).',
       'load-mviews' => 'If present the ND Genotypes mview_ndg_variants and mviews_ndg_calls will be loaded as the data is generated (Default=FALSE).',
+      'truncate-existing' => 'Provide this option to first remove all existing genotype, stock, feature data.',
     ),
   );
 
@@ -115,9 +116,13 @@ function drush_generate_trpdata_generate_genotypes() {
   require_once('api/generate.api.inc');
   require_once('api/generate.genotypes.api.inc');
 
+  // For use in filenames.
+  $site = variable_get('site_name', 'Drupal');
+  $site = preg_replace("/([^\w\d])/", '', $site);
+
   // Retrieve Options:
   //-------------------------
-  $out_stub = drush_get_option('out-stub', '/tmp/massive_genotype_dataset');
+  $out_stub = drush_get_option('out-stub', '/tmp/massive_genotype_dataset.' . $site . '.');
   $project_name = drush_get_option('project', NULL);
 
   $country = drush_get_option('country', NULL);
@@ -131,21 +136,102 @@ function drush_generate_trpdata_generate_genotypes() {
   $copy_chunk_size = drush_get_option('chunk-size', 50000);
   $marker_type = drush_get_option('marker-type','Cool Technology');
   $load_mviews = drush_get_option('load-mviews', FALSE);
+  $truncate = drush_get_option('truncate-existing', FALSE);
 
-  // Ensure cvterms are present
-  // @todo implement this.
 
-  // DELETE LATER!!!
-  print "Truncating existing data...\n";
-  chado_query('TRUNCATE {feature} CASCADE');
-  chado_query('TRUNCATE {stock} CASCADE');
-  chado_query('TRUNCATE {project} CASCADE');
-  chado_query('TRUNCATE {mview_ndg_tripalus_variants}');
-  chado_query('TRUNCATE {mview_ndg_tripalus_calls}');
+  $mview_calls_table = 'mview_ndg_tripalus_calls';
+  $mview_variants_table = 'mview_ndg_tripalus_variants';
 
-  print "Dropping indexes on materialized views...\n";
-  nd_genotypes_drop_indexes('mview_ndg_tripalus_calls');
-  nd_genotypes_drop_indexes('mview_ndg_tripalus_variants');
+  // Ensure the genotype_call table is present.
+  print "Creating genotype_call if it doesn't already exist...\n";
+  chado_create_custom_table('genotype_call', nd_genotypes_genotype_call_schema_template());
+
+  // Truncate data is asked to.
+  if ($truncate) {
+    print "Truncating existing data...\n";
+    chado_query('TRUNCATE {feature} CASCADE');
+    chado_query('TRUNCATE {stock} CASCADE');
+    chado_query('TRUNCATE {project} CASCADE');
+    chado_query('TRUNCATE {'.$mview_variants_table.'}');
+    chado_query('TRUNCATE {'.$mview_calls_table.'}');
+  }
+
+  drush_log('+ Current Database Size: ' . trpdata_get_database_size(), 'status');
+
+  //--------------------
+  // Materialized views setup.
+  if ($load_mviews) {
+
+    print "Preparing materialized views...\n";
+
+    // Ensure that the mviews exist...
+    print "  - Creating $mview_calls_table if it doesn't already exist...\n";
+    nd_genotypes_create_mview_ndg_calls($mview_calls_table);
+    print "  - Creating $mview_variants_table if it doesn't already exist...\n";
+    nd_genotypes_create_mview_ndg_variants($mview_variants_table);
+
+    // Drop any indexes.
+    print "  - Dropping indexes on materialized views...\n";
+    nd_genotypes_drop_indexes('mview_ndg_tripalus_calls');
+    nd_genotypes_drop_indexes('mview_ndg_tripalus_variants');
+  }
+
+  //--------------------
+  // CV Terms
+  // Check all the cvterms and warn if they are missing!
+  $missing_terms = FALSE; $missing_seq_terms = FALSE;
+  $types = array(
+    array('name' => 'marker_type', 'cv_name' => 'feature_property'),
+    array('name' => 'SNP', 'cv_name' => 'sequence'),
+    array('name' => 'genetic_marker', 'cv_name' => 'sequence'),
+    array('name' => 'is_marker_of', 'cv_name' => 'feature_relationship'),
+    array('name' => 'DNA', 'cv_name' => 'stock_type'),
+    array('name' => 'Accession', 'cv_name' => 'stock_type'),
+    array('name' => 'is_extracted_from', 'cv_name' => 'stock_relationship'),
+  );
+  foreach ($types as $type) {
+    // Check if it exists.
+    $exists = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:name and cv_id IN (select cv_id FROM {cv} WHERE name=:cv)',
+      array(':name' => $type['name'], ':cv' => $type['cv_name']))->fetchField();
+
+    // If it exists then save the cvterm for later.
+    if ($exists) {
+      $options['cvterm'][ $type['name'] ] = $exists;
+    }
+    // Otherwise, return an error asking them to add it.
+    else {
+      $missing_terms[ $type['name'] ] = $type;
+      drush_log('Missing cvterm "' . $type['name'] . '" (cv: "' . $type['cv_name'] . '")', 'error');
+    }
+  }
+
+  // If we were missing any cvterm then we should quit now to let them add them.
+  if ($missing_terms) {
+    if (drush_confirm('Would you like me to add the terms for you? (Will not add sequence ontology terms)')) {
+
+      foreach ($missing_terms as $term) {
+
+        // If not from the sequence ontology then create the term.
+        if ($term['cv_name'] != 'sequence') {
+          $term['id'] = 'tripal:' . $term['name'];
+          $obj = tripal_insert_cvterm($term);
+
+          // If we were successful then remove the term.
+          if ($obj) {
+            unset($missing_terms[ $term['name'] ]);
+          }
+        }
+      }
+
+      // If we still have missing terms then abort.
+      if ($missing_terms) {
+        return drush_set_error('Missing cvterms. For the sequence ontology terms we suggest you load the entire sequence ontology via the OBO loader. For all other terms, add them through the UI at Tripal > Chado Modules > Controlled Vocabularies > Terms.');
+      }
+    }
+    else {
+      return drush_set_error('Missing cvterms. For the sequence ontology terms we suggest you load the entire sequence ontology via the OBO loader. For all other terms, add them through the UI at Tripal > Chado Modules > Controlled Vocabularies > Terms.');
+    }
+  }
 
   //--------------------
   // Project
@@ -184,6 +270,8 @@ function drush_generate_trpdata_generate_genotypes() {
   $samples = generate_nd_samples($options);
   if (sizeof($samples)) { drush_log(" - Created ".sizeof($samples).' samples to attach genotypes to.', 'success'); }
   else { return drush_set_error("\tUnable to insert samples."); }
+
+  drush_log('+ Current Database Size: ' . trpdata_get_database_size(), 'status');
 
   //=======================
   // Markers and Variants
@@ -229,6 +317,8 @@ function drush_generate_trpdata_generate_genotypes() {
 
   }
 
+  drush_log('+ Current Database Size: ' . trpdata_get_database_size(), 'status');
+
   //---------------------
   // Genotype Calls.
   print "Generating Genotype Calls...\n";
@@ -262,6 +352,8 @@ function drush_generate_trpdata_generate_genotypes() {
     print " - Updating cached lists used for select boxes and what-not\n";
     nd_genotypes_update_mview_cache($partition);
   }
+
+  drush_log('+ Final Database Size: ' . trpdata_get_database_size(), 'status');
 }
 
 /**

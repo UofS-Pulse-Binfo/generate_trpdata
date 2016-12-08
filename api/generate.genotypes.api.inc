@@ -16,7 +16,7 @@
  *     - load mview: whether or not to load the new genotype calls into mview_ndg_calls (Default=FALSE)
  */
 function generate_nd_genotype_calls($options) {
-  $copy_chunk_size = 50000;
+  $copy_chunk_size = 50; //50000;
 
   // Define the defaults:
   if (!isset($options['project_id'])) return FALSE;
@@ -88,7 +88,9 @@ function generate_nd_genotype_calls($options) {
             WHERE project_id=:project";
   }
   $resource = chado_query($sql, $args);
+  $num_markers = 0;
   foreach ($resource as $r) {
+    $num_markers++;
 
     // Pick a random two alleles.
     $SNP = array_rand($options['alleles'], 2);
@@ -135,40 +137,39 @@ function generate_nd_genotype_calls($options) {
             $genotypes[ $call ], // genotype_id
             $call, // allele_call
           ));
+
       }
 
       // If we have reached the size of a chunk then go ahead and copy it into the db.
       if ($num%$copy_chunk_size == 0) {
-        fclose($CALL); fclose($MVIEW);
-
-        //$num_lines = chado_query("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV")->rowCount();
-        //$options['observed_total'] = $options['observed_total'] + $num_lines;
-        //drush_log(" - Saved $num_lines calls to the genotype_call table (".$options['observed_total']." of ".$options['expected_total'].")",'success');
-        trpdata_remote_copy("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV");
-
-        if ($options['load mview']) {
-          //$num_lines = chado_query("COPY chado.mview_ndg_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV")->rowCount();
-          //drush_log("   - Saved $num_lines calls to the mview_ndg_calls table", 'success');
-          trpdata_remote_copy("COPY chado.mview_ndg_tripalus_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV");
-        }
-
-        $CALL = fopen($call_file, 'w'); $MVIEW = fopen($mview_file, 'w');
+        $time_to_copy = TRUE;
       }
+    }
+
+    if ($time_to_copy) {
+      fclose($CALL); fclose($MVIEW);
+
+      trpdata_remote_copy("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV");
+      drush_log(" - Saved $num calls to the genotype_call table so far (all samples for $num_markers markers).", 'success');
+
+      if ($options['load mview']) {
+        trpdata_remote_copy("COPY chado.mview_ndg_tripalus_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV");
+        drush_log(" - Saved $num calls to the mview_ndg_calls table so far.", 'success');
+      }
+
+      $CALL = fopen($call_file, 'w'); $MVIEW = fopen($mview_file, 'w');
+      $time_to_copy = FALSE;
     }
 
   }
 
   // Copy in any remaining records.
   fclose($CALL); fclose($MVIEW);
-  //$num_lines = chado_query("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV")->rowCount();
-  //if ($num_lines == 0) return TRUE;
-  //drush_log(" - Saved $num_lines calls to the genotype_call table",'success');
   trpdata_remote_copy("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV");
-
+  drush_log(" - Complete! Saved a total of $num calls to the genotype_call table.", 'success');
   if ($options['load mview']) {
-    //$num_lines = chado_query("COPY chado.mview_ndg_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV")->rowCount();
-    //drush_log("   - Saved $num_lines calls to the mview_ndg_calls table", 'success');
     trpdata_remote_copy("COPY chado.mview_ndg_tripalus_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV");
+    drush_log(" - Complete! Saved a total of $num calls to the mview_ndg_tripalus_calls table.", 'success');
   }
 }
 

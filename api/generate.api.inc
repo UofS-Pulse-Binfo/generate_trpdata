@@ -157,3 +157,24 @@ function generate_chado_stock($values, $options) {
   if (sizeof($stocks) >= $options['num']) return $stocks;
   return FALSE;
 }
+
+/**
+ * Check database size.
+ *
+ * @param $pretty
+ *    TRUE if you would like a human-readable size returned, FALSE otherwise.
+ */
+function trpdata_get_database_size($pretty = TRUE) {
+
+  // Ask the database for it's size.
+  if ($pretty) {
+    $sql = 'SELECT pg_size_pretty(pg_database_size(current_database())) as fulldbsize';
+  }
+  else {
+    $sql = 'SELECT pg_database_size(current_database()) as fulldbsize';
+  }
+
+  // And return it. Simple as that.
+  return db_query($sql)->fetchField();
+
+}
