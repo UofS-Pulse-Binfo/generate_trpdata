@@ -346,7 +346,7 @@ function drush_generate_trpdata_generate_genotypes() {
     nd_genotypes_create_mview_ndg_variants_indexes('mview_ndg_'.$partition.'_variants');
 
     // Create the indexes you dropped earlier.
-    print " - Sync'ing genotypes to the mview_ndg_germplasm_genotyped mview...";
+    print " - Sync'ing genotypes to the mview_ndg_germplasm_genotyped mview...\n";
     nd_genotypes_update_mview_ndg_germplasm_genotyped($partition, 5);
 
     // Update the cached lists.
