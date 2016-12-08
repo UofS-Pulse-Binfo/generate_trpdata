@@ -16,7 +16,7 @@
  *     - load mview: whether or not to load the new genotype calls into mview_ndg_calls (Default=FALSE)
  */
 function generate_nd_genotype_calls($options) {
-  $copy_chunk_size = 50; //50000;
+  $copy_chunk_size = 50000;
 
   // Define the defaults:
   if (!isset($options['project_id'])) return FALSE;

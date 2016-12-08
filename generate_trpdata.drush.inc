@@ -122,7 +122,7 @@ function drush_generate_trpdata_generate_genotypes() {
 
   // Retrieve Options:
   //-------------------------
-  $out_stub = drush_get_option('out-stub', '/tmp/massive_genotype_dataset.' . $site . '.');
+  $out_stub = drush_get_option('out-stub', '/tmp/massive_genotype_dataset.' . $site);
   $project_name = drush_get_option('project', NULL);
 
   $country = drush_get_option('country', NULL);
@@ -328,6 +328,7 @@ function drush_generate_trpdata_generate_genotypes() {
     'samples' => $samples,
     'genotype_ids' => $genotypes,
     'load mview' => $load_mviews,
+    'out_stub' => $out_stub,
   );
   generate_nd_genotype_calls($options);
 
