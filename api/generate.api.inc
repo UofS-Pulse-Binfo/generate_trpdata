@@ -5,6 +5,49 @@
  */
 
 /**
+ * Generates random numbers following a slightly skewed normal distribution
+ */
+function trpdata_generate_random_number($min, $max, $is_float = TRUE) {
+
+  $sum = 0;
+  $randmax = $max - $min;
+  if ($randmax > 0) {
+    for ($i = 0; $i < 12; $i++) {
+        $sum += rand(0, $randmax) / $randmax;
+    }
+
+    $random_float = $min + ($sum * ($randmax / 10));
+  }
+  else {
+    $random_float = $max;
+  }
+
+  if ($is_float) {
+    return $random_float;
+  }
+  else {
+    return round($random_float);
+  }
+}
+
+/**
+ * Generates a random string.
+ */
+function trpdata_generate_random_string($length = 10) {
+
+  $characters = '0123456789ab cdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQR STUVW XYZ';
+  $charactersLength = strlen($characters);
+
+  $randomString = '';
+  for ($i = 0; $i < $length; $i++) {
+    $randomString .= $characters[rand(0, $charactersLength - 1)];
+  }
+
+  return $randomString;
+
+}
+
+/**
  * Retrieve or Create the default organism: Tripalus databasica.
  *
  * @param $options
