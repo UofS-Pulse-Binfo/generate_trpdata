@@ -63,12 +63,10 @@ function generate_trpdata_drush_command() {
     ),
   );
 
-/*
   $items['generate-phenotypes'] = array(
     'description' => 'Generate Phenotypic Data.',
     'aliases' => array('gen-pheno'),
   );
-*/
 
   return $items;
 }
