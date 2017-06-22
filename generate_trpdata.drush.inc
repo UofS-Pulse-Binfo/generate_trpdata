@@ -622,32 +622,6 @@ function drush_generate_trpdata_generate_phenotypes() {
   print "Years: ".implode(', ', $years).".\n";
 
   //--------------------
-  // Phenotype Property Types
-  // Retrieve the type_ids needed to store the properties of a phenotype.
-  $types = array(
-    'location' => array('name' => 'Location', 'cv_name' => 'nd_geolocation_property'),
-    'year' => array('name' => 'Year', 'cv_name' => 'tripal_pub'),
-    'min' => array('name' => 'minimal boundary', 'cv_name' => 'local'),
-    'max' => array('name' => 'maximal boundary', 'cv_name' => 'local'),
-    'standard deviation' => array('name' => 'standard deviation', 'cv_name' => 'local'),
-  );
-  $type_ids = array();
-  foreach ($types as $key => $type) {
-    // Check if it exists.
-    $exists = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:name and cv_id IN (select cv_id FROM {cv} WHERE name=:cv)',
-      array(':name' => $type['name'], ':cv' => $type['cv_name']))->fetchField();
-
-    // If it exists then save the cvterm for later.
-    if ($exists) {
-      $type_ids[ $key ] = $exists;
-    }
-    // Otherwise, return an error asking them to add it.
-    else {
-      return drush_set_error('Missing cvterm "' . $type['name'] . '" (cv: "' . $type['cv_name'] . '")');
-    }
-  }
-
-  //--------------------
   // Stocks
   // Get the list of stocks.
   // 1) check if there are stocks associated with this project and if so, just use them.
@@ -695,6 +669,32 @@ function drush_generate_trpdata_generate_phenotypes() {
     variable_set('analyzedphenotypes_altered_tables', TRUE);
   }
 
+  //--------------------
+  // Phenotype Property Types
+  // Retrieve the type_ids needed to store the properties of a phenotype.
+  $types = array(
+    'location' => array('name' => 'Location', 'cv_name' => 'nd_geolocation_property'),
+    'year' => array('name' => 'Year', 'cv_name' => 'tripal_pub'),
+    'min' => array('name' => 'minimal boundary', 'cv_name' => 'local'),
+    'max' => array('name' => 'maximal boundary', 'cv_name' => 'local'),
+    'standard deviation' => array('name' => 'standard deviation', 'cv_name' => 'local'),
+  );
+  $type_ids = array();
+  foreach ($types as $key => $type) {
+    // Check if it exists.
+    $exists = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:name and cv_id IN (select cv_id FROM {cv} WHERE name=:cv)',
+      array(':name' => $type['name'], ':cv' => $type['cv_name']))->fetchField();
+
+    // If it exists then save the cvterm for later.
+    if ($exists) {
+      $type_ids[ $key ] = $exists;
+    }
+    // Otherwise, return an error asking them to add it.
+    else {
+      return drush_set_error('Missing cvterm "' . $type['name'] . '" (cv: "' . $type['cv_name'] . '")');
+    }
+  }
+  
   //--------------------
   // Generate data 
   // for each location, year, stock combination.
