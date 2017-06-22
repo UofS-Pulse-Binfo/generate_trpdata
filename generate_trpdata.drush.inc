@@ -66,6 +66,15 @@ function generate_trpdata_drush_command() {
   $items['generate-phenotypes'] = array(
     'description' => 'Generate Phenotypic Data.',
     'aliases' => array('gen-pheno'),
+    'options' => array(
+      'trait' => 'The name of the trait you would like to generate data for. It is expected to already be available as a controlled vocabulary term.',
+      'project' => 'The name of the project to use. The project will be created if it\'s
+        not already and you will be prompted if you would like to use germplasm already
+        associated with an existing project.',
+      'locations' => 'A comma-seperated list of locations that generated data was supposedly taken in.',
+      'years' => 'A comma-seperated list of years that generated data was sposedly collected during.',
+      'num-samples' => 'The number of samples/germplasm (Default=100). If there are stocks associated with the project, this options is ignored.',
+    ),
   );
 
   return $items;
@@ -553,34 +562,153 @@ function drush_generate_trpdata_generate_raw_phenotypes($filename = NULL, $proje
  */
 function drush_generate_trpdata_generate_phenotypes() {
 
-  // Create phenotypic data for all stocks associated with a given project
-  // for the locations and years specified in the following array.
-  // HARD-CODING FOR NOW TO MAKE QUICKER.
-  $trait_id = 2787;
-  $project_id = 4;
-  $locations = array('Sutherland', 'Kernen Farm');
-  $years = array(2013, 2014);
+  require_once('api/generate.api.inc');
 
-  $type_ids = array(
-    'location' => 2500,
-    'year' => 2790,
-    'min' => 2791,
-    'max' => 2792,
-    'standard deviation' => 2793,
+  //--------------------
+  // Collect Options.
+  $trait_name = drush_get_option('trait', 'Fictional Works');
+  $project_name = drush_get_option('project', NULL);
+  $locations = drush_get_option('locations', 'Sutherland,Kernen Farm');
+  $years = drush_get_option('years', '2013,2014,2015');
+  $num_stocks = drush_get_option('num-samples', 100);
+  
+  //--------------------
+  // Trait
+  // The trait that data should be generate for.
+  $trait_id = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:trait LIMIT 1',
+    array(':trait' => $trait_name))->fetchField();
+  if (!$trait_id) { return drush_set_error('Trait is required.'); }
+  print "\nTrait: $trait_name ($trait_id).\n";
+
+  //--------------------
+  // Project
+  // Create a project to group the phenotypes.
+  // Note: A project will be selected if it already exists.
+  if ($project_name) {
+    $values = array(
+      'name' => $project_name,
+    );
+  }
+  else {
+    $values = array(
+      'name' => 'Phenotype Set: '.date('YMd'),
+    );
+  }
+  $r = chado_select_record('project',array('*'), $values);
+  if (!$r) {
+    $values['description'] = 'A project which groups together an analyzed phenotype dataset.';
+    $r = chado_insert_record('project', $values);
+
+    $project_id = $r['project_id'];
+    drush_log('Created a project (' .$values['name'] . ': ' .$project_id.')', 'success');
+  }
+  else {
+    $project_id = $r[0]->project_id;
+    drush_log('Re-used existing project (' .$values['name'] . ': ' .$project_id.')', 'success');
+  }
+  
+  //--------------------
+  // Locations 
+  // The locations data was supposedly taken in.
+  // It's provided as a comma-seperated list so make sure to seperate it into an array.
+  $locations = explode(',', $locations);
+  print "Locations: ".implode(', ', $locations).".\n";
+
+  //--------------------
+  // Years
+  // The years data was supposedly taken during.
+  // It's provided as a comma-seperated list so make sure to seperate it into an array.
+  $years = explode(',', $years);
+  print "Years: ".implode(', ', $years).".\n";
+
+  //--------------------
+  // Phenotype Property Types
+  // Retrieve the type_ids needed to store the properties of a phenotype.
+  $types = array(
+    'location' => array('name' => 'Location', 'cv_name' => 'nd_geolocation_property'),
+    'year' => array('name' => 'Year', 'cv_name' => 'tripal_pub'),
+    'min' => array('name' => 'minimal boundary', 'cv_name' => 'local'),
+    'max' => array('name' => 'maximal boundary', 'cv_name' => 'local'),
+    'standard deviation' => array('name' => 'standard deviation', 'cv_name' => 'local'),
   );
+  $type_ids = array();
+  foreach ($types as $key => $type) {
+    // Check if it exists.
+    $exists = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:name and cv_id IN (select cv_id FROM {cv} WHERE name=:cv)',
+      array(':name' => $type['name'], ':cv' => $type['cv_name']))->fetchField();
+
+    // If it exists then save the cvterm for later.
+    if ($exists) {
+      $type_ids[ $key ] = $exists;
+    }
+    // Otherwise, return an error asking them to add it.
+    else {
+      return drush_set_error('Missing cvterm "' . $type['name'] . '" (cv: "' . $type['cv_name'] . '")');
+    }
+  }
+
+  //--------------------
+  // Stocks
+  // Get the list of stocks.
+  // 1) check if there are stocks associated with this project and if so, just use them.
+  $stocks = chado_query('SELECT * FROM {project_stock} p LEFT JOIN {stock} s USING(stock_id) WHERE project_id=:id',
+    array(':id' => $project_id))->fetchAllAssoc('stock_id');
+  // Otherwise, generate a set of stocks using the API function.
+  if (!$stocks) {
+    print "\nNo stocks were associated with the project so we will generate some.\n";
+    // Compile the options/values needed for the api call.
+    $organism = trpdata_get_default_organism();
+    $type_id = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:type',
+      array(':type' => 'cultivar'))->fetchField();
+    $values = array(
+      'organism_id' => $organism->organism_id,
+      'type_id' => $type_id,
+    );
+    $options = array('num' => $num_stocks, 'insert' => TRUE, 'country' => 'Canada');
+    
+    // Actually generate the stocks.
+    $stocks = generate_chado_stock($values, $options);
+    
+    // Associate them with the current project.
+    foreach ($stocks as $stock_id => $stock) {
+      chado_query('INSERT INTO {project_stock} (project_id, stock_id) VALUES (:project_id, :stock_id)',
+        array(':project_id' => $project_id, ':stock_id' => $stock_id));
+    }
+  }
+  print sizeof($stocks) . " stocks selected for hypothetical phenotypic trial.\n";
+ 
+  //-------------------- 
+  // Alter Table Structure.
+  $is_altered = variable_get('analyzedphenotypes_altered_tables', FALSE);
+  if (!$is_altered) {
+    chado_query('ALTER TABLE {phenotype} ADD COLUMN project_id integer REFERENCES {project} (project_id)');
+    chado_query('ALTER TABLE {phenotype} ADD COLUMN stock_id integer REFERENCES {stock} (stock_id)');
+    chado_query('ALTER TABLE {phenotypeprop} ADD COLUMN cvalue_id integer REFERENCES {cvterm} (cvterm_id)');
+
+    $term = array(
+      'name' => 'standard deviation',
+      'cv_name' => 'local',
+      'id' => 'local:standard deviation',
+    );
+    $obj = tripal_insert_cvterm($term);
+  
+    variable_set('analyzedphenotypes_altered_tables', TRUE);
+  }
+
+  //--------------------
+  // Generate data 
+  // for each location, year, stock combination.
 
   // Header
+  print "\nDATASET:\nThe generated dataset will be printed below as well as inserted into the database.\n";
   print implode("\t", array('Location', 'Year', 'Line', 'Mean', 'Min', 'Max', 'Std. Dev.')) . "\n";
 
-  // Get the list of stocks.
-  $stocks = chado_query('SELECT s.stock_id, s.name FROM {project_stock} p LEFT JOIN {stock} s USING(stock_id) WHERE project_id=:id LIMIT 5',
-    array(':id' => $project_id))->fetchAllKeyed();
-
-  // Generate data for each location, year, stock combination.
   foreach ($locations as $location) {
     foreach ($years as $year) {
-      foreach ($stocks as $stock_id => $stock_name) {
-
+      foreach ($stocks as $stock_id => $stock) {
+        
+        $stock_name = $stock->name;
+        
         // Generate quantitate data.
         $mean = rand(100,300) / 10;
         $dev = rand(20,50) / 10;

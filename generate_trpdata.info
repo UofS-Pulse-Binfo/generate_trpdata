@@ -2,4 +2,4 @@ name = Generate Tripal Test Data
 description = Generate various types of data for testing Tripal functionality
 core = 7.x
 package = Development
-dependencies[] = tripal_core
+dependencies[] = tripal
