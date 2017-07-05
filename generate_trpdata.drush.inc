@@ -10,12 +10,14 @@ function generate_trpdata_drush_command() {
   $items = array();
 
   $items['generate-stocks'] = array(
-    'description' => 'Generate chado stocks. Use --print-names if you would like ths names and stock_ids of the stocks created ;-).',
+    'description' => 'Generate chado stocks (saved directly to database). Use --print-names if you would like the names and stock_ids of the stocks created ;-).',
     'aliases' => array('gen-stock'),
-    'arguments' => array(
-      'type_id' => 'The type of stock',
+    'examples' => array(
+      'drush gen-stock --num=500' => 'Generates 500 stocks with a type of Accession.',
+      'drush gen-stock --num=5 --country="Canada" --uniquename="sample_[last]_[first]"' => 'Generates 5 stocks of type Accession, Canadian names and a uniquename following the convention specified.'
     ),
     'options' => array(
+      'type_id' => 'The cvterm_id indicating the type of stock (Default= cvterm_id of Accession).',
       'num' => 'The number of stocks you would like to generate (Default=1).',
       'organism_id' => 'The organism the stock is from (Default=Tripalus databasica)',
       'country' => 'The country you want to restrict randomly generated names to. See http://uinames.com/ for options.',
@@ -26,8 +28,12 @@ function generate_trpdata_drush_command() {
   );
 
   $items['generate-genotypes'] = array(
-    'description' => 'Generate Genotypic Data.',
+    'description' => 'Generate Genotypic Data (saved directly to database). Data is stored according to the conventions used by the UofS ND Genotypes extension module (i.e. using the genotype_call table).',
     'aliases' => array('gen-geno'),
+    'examples' => array(
+      'drush gen-geno' => 'Generates 5 million SNPs across 10 chromosomes and genotype calls on those SNPs for 100 germplasm samples.',
+      'drush gen-geno --num-samples=450 --num-chr=5 --num-per-chr=2000000 --load-mviews' => 'Generates 10 million SNPs across 5 chromosomes and genotype calls on those SNPs for 450 germplasm samples. It will also load into the materialized views used by ND Genotypes at the same time allowing you to quickly demo functionality.'
+    ),
     'options' => array(
       'out-stub' => "The full path stub for any files used with copy. Default is '/tmp/massive_genotype_dataset'.",
       'num-samples' => 'The number of samples/germplasm (Default=100).',
@@ -47,8 +53,11 @@ function generate_trpdata_drush_command() {
   );
 
   $items['generate-raw-phenotypes'] = array(
-    'description' => 'Generate Raw Phenotypic Data in CSV format for a specified phenotyping project.',
+    'description' => 'Generate Raw Phenotypic Data in CSV format for a specified phenotyping project. This can be used to test the UofS Raw Phenotypes module (although it will need to be opened in MS Excel, the tab re-labelled "Measurements" and saved as xlsx).',
     'aliases' => array('gen-rawpheno'),
+    'examples' => array(
+      'drush gen-rawpheno /tmp/rawpheno.currentdate.csv 5' => 'Generates a CSV file (specified) with the traits setup by the UofS Raw Phenotypes module for project_id=5. The file will contain data for all traits, 100 samples/germplasm, 4 locations ("The Ground","Here","There","Nowhere...","My Favourite Place") with 3 replicates in each location.',
+    ),
     'arguments' => array(
       'filename' => 'The full path and filename you want generated data saved to.',
       'project_id' => 'The project_id of the project to generate data for.',
@@ -56,7 +65,7 @@ function generate_trpdata_drush_command() {
     'options' => array(
       'num-samples' => 'The number of samples/germplasm (Default=100).',
       'create-samples' => 'If present, the samples will be inserted into the database. Otherwise they will be selected from existing samples (chado.stock table).',
-      'locations' => 'A comma seperated list of locations to add.',
+      'locations' => 'A comma seperated list of locations to add (Default="The Ground","Here","There","Nowhere...","My Favourite Place").',
       'num-reps' => 'The number of reps to generate (Default=3).',
       'planting-date' => 'The date to use for the planting date column (Default=1984-12-10).',
       'sparse-data' => 'When provided some measurements will be skipped for some locations/reps and not all values will be filled in.',
@@ -64,15 +73,18 @@ function generate_trpdata_drush_command() {
   );
 
   $items['generate-phenotypes'] = array(
-    'description' => 'Generate Phenotypic Data.',
+    'description' => 'Generate Phenotypic Data (saved directly to database). Data is stored according to the conventions used by the UofS Analyzed Phenotypes extension module (i.e. using a modified phenotype table).',
     'aliases' => array('gen-pheno'),
+    'examples' => array(
+      'drush gen-pheno' => 'Generates phenotypic obsersavtions for a single trait ("Fictional Works"). Specifically, datapoints for 100 plots grown in 4 locations across 3 years.',
+    ),
     'options' => array(
-      'trait' => 'The name of the trait you would like to generate data for. It is expected to already be available as a controlled vocabulary term.',
+      'trait' => 'The name of the trait you would like to generate data for. It is expected to already be available as a controlled vocabulary term (Default="Fictional Works").',
       'project' => 'The name of the project to use. The project will be created if it\'s
         not already and you will be prompted if you would like to use germplasm already
         associated with an existing project.',
-      'locations' => 'A comma-seperated list of locations that generated data was supposedly taken in.',
-      'years' => 'A comma-seperated list of years that generated data was sposedly collected during.',
+      'locations' => 'A comma-seperated list of locations that generated data was supposedly taken in (Default="The Ground","Here","There","Nowhere...","My Favourite Place").',
+      'years' => 'A comma-seperated list of years that generated data was suposedly collected during (Default=2013,2014,2015).',
       'num-samples' => 'The number of samples/germplasm (Default=100). If there are stocks associated with the project, this options is ignored.',
     ),
   );
@@ -83,11 +95,12 @@ function generate_trpdata_drush_command() {
 /**
  * Drush Command: Generate Stocks.
  */
-function drush_generate_trpdata_generate_stocks($type_id) {
+function drush_generate_trpdata_generate_stocks() {
 
   require_once('api/generate.api.inc');
 
   // Get options from drush.
+  $type_id = drush_get_option('type_id', NULL);
   $num = drush_get_option('num', 1);
   $organism_id = drush_get_option('organism_id', trpdata_get_default_organism(array('id only' => TRUE)));
   $country = drush_get_option('country', NULL);
@@ -95,6 +108,12 @@ function drush_generate_trpdata_generate_stocks($type_id) {
   $uniquename = drush_get_option('uniquename', NULL);
   $print_names = drush_get_option('print-names', FALSE);
   $insert = drush_get_option('insert', TRUE);
+  
+  // If type_id is null then use Accession.
+  if (!$type_id) {
+    $type_id = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:name and cv_id IN (select cv_id FROM {cv} WHERE name=:cv)',
+      array(':name' => 'Accession', ':cv' => 'EDAM'))->fetchField();
+  }
 
   // Values for the api command.
   $values = array(
@@ -167,7 +186,6 @@ function drush_generate_trpdata_generate_genotypes() {
   $marker_type = drush_get_option('marker-type','Cool Technology');
   $load_mviews = drush_get_option('load-mviews', FALSE);
   $truncate = drush_get_option('truncate-existing', FALSE);
-
 
   $mview_calls_table = 'mview_ndg_tripalus_calls';
   $mview_variants_table = 'mview_ndg_tripalus_variants';
@@ -571,7 +589,7 @@ function drush_generate_trpdata_generate_phenotypes() {
   // Collect Options.
   $trait_name = drush_get_option('trait', 'Fictional Works');
   $project_name = drush_get_option('project', NULL);
-  $locations = drush_get_option('locations', 'Sutherland,Kernen Farm');
+  $locations = drush_get_option('locations', '"The Ground","Here","There","Nowhere...","My Favourite Place"');
   $years = drush_get_option('years', '2013,2014,2015');
   $num_stocks = drush_get_option('num-samples', 100);
 
