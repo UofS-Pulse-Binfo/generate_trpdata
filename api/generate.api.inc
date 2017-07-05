@@ -134,7 +134,7 @@ function generate_chado_stock($values, $options) {
     $num_to_grab = ($options['num'] <= 500) ? $options['num'] : 500;
 
     // Grab a collection of names to use for stocks.
-    if (isset($options['country'])) {
+    if (isset($options['country']) AND !empty($options['country'])) {
       $url = 'http://uinames.com/api/?gender=female&region=' . $options['country'] . '&amount=' . $num_to_grab;
     }
     else {

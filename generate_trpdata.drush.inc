@@ -211,22 +211,22 @@ function drush_generate_trpdata_generate_genotypes() {
   // Check all the cvterms and warn if they are missing!
   $missing_terms = FALSE; $missing_seq_terms = FALSE;
   $types = array(
-    array('name' => 'marker_type', 'cv_name' => 'feature_property'),
-    array('name' => 'SNP', 'cv_name' => 'sequence'),
-    array('name' => 'genetic_marker', 'cv_name' => 'sequence'),
-    array('name' => 'is_marker_of', 'cv_name' => 'feature_relationship'),
-    array('name' => 'DNA', 'cv_name' => 'stock_type'),
-    array('name' => 'Accession', 'cv_name' => 'stock_type'),
-    array('name' => 'is_extracted_from', 'cv_name' => 'stock_relationship'),
+    'marker_type' => array('name' => 'type', 'cv_name' => 'rdfs'),
+    'SNP' => array('name' => 'sequence_variant', 'cv_name' => 'sequence'),
+    'genetic_marker' => array('name' => 'genetic_marker', 'cv_name' => 'sequence'),
+    'is_marker_of' => array('name' => 'derives_from', 'cv_name' => 'sequence'),
+    'DNA' => array('name' => 'genomic_DNA', 'cv_name' => 'sequence'),
+    'Accession' => array('name' => 'Accession', 'cv_name' => 'EDAM'),
+    'is_extracted_from' => array('name' => 'derives_from', 'cv_name' => 'sequence'),
   );
-  foreach ($types as $type) {
+  foreach ($types as $key => $type) {
     // Check if it exists.
     $exists = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:name and cv_id IN (select cv_id FROM {cv} WHERE name=:cv)',
       array(':name' => $type['name'], ':cv' => $type['cv_name']))->fetchField();
 
     // If it exists then save the cvterm for later.
     if ($exists) {
-      $options['cvterm'][ $type['name'] ] = $exists;
+      $options['cvterm'][ $key ] = $exists;
     }
     // Otherwise, return an error asking them to add it.
     else {
@@ -296,8 +296,9 @@ function drush_generate_trpdata_generate_genotypes() {
   //--------------------
   // Germplasm and Samples.
   print "Generating Samples and Germplasm...\n";
-  $options = array('num' => $num_samples, 'insert' => TRUE, 'generate germplasm' => TRUE);
-  $samples = generate_nd_samples($options);
+  $stock_options = array('num' => $num_samples, 'insert' => TRUE, 'generate germplasm' => TRUE, 'country' => $country);
+  $stock_options = array_merge($options, $stock_options);
+  $samples = generate_nd_samples($stock_options);
   if (sizeof($samples)) { drush_log(" - Created ".sizeof($samples).' samples to attach genotypes to.', 'success'); }
   else { return drush_set_error("\tUnable to insert samples."); }
 
@@ -333,7 +334,7 @@ function drush_generate_trpdata_generate_genotypes() {
 
     //--------------------
     // Variants/Markers.
-    $options = array(
+    $feature_options = array(
       'num_per_chr' => $num_per_chr,
       'chr' => $chr,
       'chr_id' => $chr_id,
@@ -343,7 +344,8 @@ function drush_generate_trpdata_generate_genotypes() {
       'marker_type' => $marker_type,
       'load mview' => $load_mviews,
     );
-    generate_nd_markers($options);
+    $feature_options = array_merge($options, $feature_options);
+    generate_nd_markers($feature_options);
 
   }
 
@@ -352,7 +354,7 @@ function drush_generate_trpdata_generate_genotypes() {
   //---------------------
   // Genotype Calls.
   print "Generating Genotype Calls...\n";
-  $options = array(
+  $call_options = array(
     'alleles' => $alleles,
     'project_id' => $project_id,
     'samples' => $samples,
@@ -360,7 +362,8 @@ function drush_generate_trpdata_generate_genotypes() {
     'load mview' => $load_mviews,
     'out_stub' => $out_stub,
   );
-  generate_nd_genotype_calls($options);
+  $call_options = array_merge($options, $call_options);
+  generate_nd_genotype_calls($call_options);
 
   if ($load_mviews) {
     $partition = 'tripalus';
@@ -571,7 +574,7 @@ function drush_generate_trpdata_generate_phenotypes() {
   $locations = drush_get_option('locations', 'Sutherland,Kernen Farm');
   $years = drush_get_option('years', '2013,2014,2015');
   $num_stocks = drush_get_option('num-samples', 100);
-  
+
   //--------------------
   // Trait
   // The trait that data should be generate for.
@@ -606,9 +609,9 @@ function drush_generate_trpdata_generate_phenotypes() {
     $project_id = $r[0]->project_id;
     drush_log('Re-used existing project (' .$values['name'] . ': ' .$project_id.')', 'success');
   }
-  
+
   //--------------------
-  // Locations 
+  // Locations
   // The locations data was supposedly taken in.
   // It's provided as a comma-seperated list so make sure to seperate it into an array.
   $locations = explode(',', $locations);
@@ -639,10 +642,10 @@ function drush_generate_trpdata_generate_phenotypes() {
       'type_id' => $type_id,
     );
     $options = array('num' => $num_stocks, 'insert' => TRUE, 'country' => 'Canada');
-    
+
     // Actually generate the stocks.
     $stocks = generate_chado_stock($values, $options);
-    
+
     // Associate them with the current project.
     foreach ($stocks as $stock_id => $stock) {
       chado_query('INSERT INTO {project_stock} (project_id, stock_id) VALUES (:project_id, :stock_id)',
@@ -650,8 +653,8 @@ function drush_generate_trpdata_generate_phenotypes() {
     }
   }
   print sizeof($stocks) . " stocks selected for hypothetical phenotypic trial.\n";
- 
-  //-------------------- 
+
+  //--------------------
   // Alter Table Structure.
   $is_altered = variable_get('analyzedphenotypes_altered_tables', FALSE);
   if (!$is_altered) {
@@ -665,7 +668,7 @@ function drush_generate_trpdata_generate_phenotypes() {
       'id' => 'local:standard deviation',
     );
     $obj = tripal_insert_cvterm($term);
-  
+
     variable_set('analyzedphenotypes_altered_tables', TRUE);
   }
 
@@ -694,9 +697,9 @@ function drush_generate_trpdata_generate_phenotypes() {
       return drush_set_error('Missing cvterm "' . $type['name'] . '" (cv: "' . $type['cv_name'] . '")');
     }
   }
-  
+
   //--------------------
-  // Generate data 
+  // Generate data
   // for each location, year, stock combination.
 
   // Header
@@ -706,9 +709,9 @@ function drush_generate_trpdata_generate_phenotypes() {
   foreach ($locations as $location) {
     foreach ($years as $year) {
       foreach ($stocks as $stock_id => $stock) {
-        
+
         $stock_name = $stock->name;
-        
+
         // Generate quantitate data.
         $mean = rand(100,300) / 10;
         $dev = rand(20,50) / 10;

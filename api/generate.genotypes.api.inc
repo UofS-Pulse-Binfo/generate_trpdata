@@ -36,8 +36,8 @@ function generate_nd_genotype_calls($options) {
     array(':project' => $options['project_id']))->fetchField() * sizeof($options['samples']);
   $options['observed_total'] = 0;
 
-  $featureprop_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='marker_type'")->fetchField();
-  $variant_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='SNP'")->fetchField();
+  $featureprop_type_id = $options['cvterm']['marker_type'];
+  $variant_type_id = $options['cvterm']['SNP'];
 
   //--------------------
   // Genotypes
@@ -70,7 +70,7 @@ function generate_nd_genotype_calls($options) {
 
   //=======================
   // Now grab each marker...
-  $rel_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='is_marker_of'")->fetchField();
+  $rel_type_id = $options['cvterm']['is_marker_of'];
   $args = array(':project' => $options['project_id'], ':reltype' => $rel_type_id);
   if ($options['load mview']) {
     $sql = "SELECT pf.feature_id as marker_id, m.name as marker_name, mt.value as marker_type, fr.object_id as variant_id
@@ -225,13 +225,13 @@ function generate_nd_markers($options) {
   $options['expected_total'] = $options['num_per_chr'] * 2; // *2 because there are both markers and variants.
 
   // Retieve the types.
-  $marker_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='genetic_marker'")->fetchField();
+  $marker_type_id = $options['cvterm']['genetic_marker'];
   $options['marker_type_id'] = $marker_type_id;
-  $variant_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='SNP'")->fetchField();
+  $variant_type_id = $options['cvterm']['SNP'];
   $options['variant_type_id'] = $variant_type_id;
-  $rel_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='is_marker_of'")->fetchField();
+  $rel_type_id = $options['cvterm']['is_marker_of'];
   $options['rel_type_id'] = $rel_type_id;
-  $prop_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='marker_type'")->fetchField();
+  $prop_type_id = $options['cvterm']['marker_type'];
   $options['prop_type_id'] = $prop_type_id;
 
   // COPY File for feature table.
@@ -388,6 +388,7 @@ function _generate_nd_markers_copy_helper(&$options, $feature_file) {
  *     - generate germplasm: true if you would like to generate random germplasm
  *         as well as samples (Default: FALSE)
  *     - insert: whether or not you want the stocks inserted as you go (Default: FALSE)
+ *     - country: the name of the contry to restrict generated names to (Default: NULL)
  *
  * @return
  *   An array keyed with sample stock_id where each item is an array with
@@ -401,11 +402,12 @@ function generate_nd_samples($options) {
   if (!isset($options['organism_id'])) $options['organism_id'] = trpdata_get_default_organism(array('id only' => TRUE));
   if (!isset($options['generate germplasm'])) $options['generate germplasm'] = FALSE;
   if (!isset($options['insert'])) $options['insert'] = FALSE;
+  if (!isset($options['country'])) $options['country'] = NULL;
 
   // Get Types.
-  $sample_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='DNA'")->fetchField();
-  $germplasm_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='Accession'")->fetchField();
-  $stockrel_type_id = chado_query("SELECT cvterm_id FROM {cvterm} WHERE name='is_extracted_from'")->fetchField();
+  $sample_type_id = $options['cvterm']['DNA'];
+  $germplasm_type_id = $options['cvterm']['Accession'];
+  $stockrel_type_id = $options['cvterm']['is_extracted_from'];
 
   // Get a list of germplasm.
   // If specified, do so by generating random germplasm.
