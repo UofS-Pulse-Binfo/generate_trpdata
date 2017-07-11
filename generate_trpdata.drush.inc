@@ -79,7 +79,9 @@ function generate_trpdata_drush_command() {
       'drush gen-pheno' => 'Generates phenotypic obsersavtions for a single trait ("Fictional Works"). Specifically, datapoints for 100 plots grown in 4 locations across 3 years.',
     ),
     'options' => array(
-      'trait' => 'The name of the trait you would like to generate data for. It is expected to already be available as a controlled vocabulary term (Default="Fictional Works").',
+      'trait' => 'The name of the trait you would like to generate data for. It is expected to already be available as a controlled vocabulary term (Default="Fictional Works"). This option is ignored if num-traits and trait-cv is supplied.',
+      'num-traits' => 'The number of traits to generate data for. This option works in conjunction with trait-cv and simply picks random traits.',
+      'trait-cv' => 'The name of the cv to pull random traits from.',
       'min-value' => 'The minimum value that any germplasm should have for this trait (Default=Random).',
       'max-value' => 'The maximum value that any germplasm should have for this trait (Default=Random).',
       'project' => 'The name of the project to use. The project will be created if it\'s
@@ -591,13 +593,16 @@ function drush_generate_trpdata_generate_phenotypes() {
   //--------------------
   // Collect Options.
   $trait_name = drush_get_option('trait', 'Fictional Works');
+  $trait_cv_name = drush_get_option('trait-cv', NULL);
+  $num_traits = drush_get_option('num-traits', NULL);
   $project_name = drush_get_option('project', NULL);
   $locations = drush_get_option('locations', '"The Ground","Here","There","Nowhere...","My Favourite Place"');
   $years = drush_get_option('years', '2013,2014,2015');
   $num_stocks = drush_get_option('num-samples', 100);
   $truncate = drush_get_option('truncate-existing', FALSE);
-  $min = drush_get_option('min-value', rand(10,500));
-  $max = drush_get_option('max-value', $min + rand(100,500));
+  $min = drush_get_option('min-value', NULL);
+  $max = drush_get_option('max-value', NULL);
+  $boundries_provided = ($min === NULL) ? FALSE : TRUE;
 
   // Truncate data is asked to.
   if ($truncate) {
@@ -610,11 +615,32 @@ function drush_generate_trpdata_generate_phenotypes() {
   //--------------------
   // Trait
   // The trait that data should be generate for.
-  $trait_id = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:trait LIMIT 1',
-    array(':trait' => $trait_name))->fetchField();
-  if (!$trait_id) { return drush_set_error('Trait is required.'); }
-  print "\nTrait: $trait_name ($trait_id).\n";
-
+  // Check if we are dealing with a single trait...
+  if ($num_traits === NULL) {
+    $trait_id = chado_query('SELECT cvterm_id FROM {cvterm} WHERE name=:trait LIMIT 1',
+      array(':trait' => $trait_name))->fetchField();
+    if (!$trait_id) { return drush_set_error('Trait is required.'); }
+    print "\nTrait: $trait_name ($trait_id).\n";
+    $traits = array($trait_id => $trait_name);
+  }
+  // We should choose a random set of traits from the specified CV.
+  elseif ($num_traits AND $trait_cv_name) {
+    $traits = chado_query('
+      SELECT cvt.cvterm_id, cvt.name
+      FROM {cvterm} cvt
+      LEFT JOIN {cv} ON cv.cv_id=cvt.cv_id
+      WHERE cv.name=:cv
+      ORDER BY rand()
+      LIMIT '.$num_traits,
+      array(':cv' => $trait_cv_name))->fetchAllKeyed();
+    if (!$traits) {
+      return drush_set_error('You must provide the full name of an existing controlled vovabulary for --trait-cv option.');
+    }
+    print "\nTraits: " . implode(', ', $traits) . ".\n";
+  }
+  else {
+    return drush_set_error('Either request a single trait or supply BOTH --num-traits and --trait-cv');
+  }
   //--------------------
   // Project
   // Create a project to group the phenotypes.
@@ -737,54 +763,63 @@ function drush_generate_trpdata_generate_phenotypes() {
   //print implode("\t", array('Location', 'Year', 'Line', 'Mean', 'Min', 'Max', 'Std. Dev.')) . "\n";
   print "\nGenerating data for hypothetical phenotypic trial...\n";
 
-  foreach ($locations as $location) {
-    print "\t - $location\n";
-    foreach ($years as $year) {
-      print "\t\t - $year\n";
-      foreach ($stocks as $stock_id => $stock) {
+  foreach ($traits as $trait_id => $trait_name) {
+    print $trait_name . "\n";
 
-        // Generate quantitate data.
-        $mean = trpdata_generate_random_number($min, $max, TRUE);
+    if (!$boundries_provided) {
+      $min = rand(10,500);
+      $max = $min + rand(100,500);
+    }
 
-        for($rep = 1; $rep <= 3; $rep++) {
+    foreach ($locations as $location) {
+      print "\t - $location\n";
+      foreach ($years as $year) {
+        print "\t\t - $year\n";
+        foreach ($stocks as $stock_id => $stock) {
 
-          $stock_name = $stock->name;
+          // Generate quantitate data.
+          $mean = trpdata_generate_random_number($min, $max, TRUE);
 
-          $value = $mean + (rand(0,30)/10);
+          for($rep = 1; $rep <= 3; $rep++) {
 
-          // Print to the dataset file.
-          //print implode("\t", array($location, $year, $stock_name, $mean, $min, $max, $dev)) . "\n";
+            $stock_name = $stock->name;
 
-          // Come up with a uniquename for this measurement.
-          $uniquename = implode('_', array($trait_id, $project_id, $location, $year, $stock_id, $rep, date('Ymd')));
+            $value = $mean + (rand(0,30)/10);
 
-          // Now, insert him into the database :-).
-          //Phenotype
-          $values = array(
-            ':uniquename' => $uniquename,
-            ':attr_id' => $trait_id,
-            ':value' => $value,
-            ':project_id' => $project_id,
-            ':stock_id' => $stock_id,
-          );
-          chado_query('INSERT INTO {phenotype} (uniquename, attr_id, value, project_id, stock_id) VALUES (:uniquename, :attr_id, :value, :project_id, :stock_id)',
-            $values);
-          $phenotype_id = chado_query('SELECT phenotype_id FROM {phenotype} WHERE uniquename=:uniquename AND attr_id=:attr_id AND value=:value AND project_id=:project_id AND stock_id=:stock_id',
-            $values)->fetchField();
+            // Print to the dataset file.
+            //print implode("\t", array($location, $year, $stock_name, $mean, $min, $max, $dev)) . "\n";
 
-          // Phenotype Properties
-          $properties = array(
-            $type_ids['location'] => $location,
-            $type_ids['year'] => $year,
-            $type_ids['rep'] => $rep,
-          );
-          foreach ($properties as $type_id => $value) {
+            // Come up with a uniquename for this measurement.
+            $uniquename = implode('_', array($trait_id, $project_id, $location, $year, $stock_id, $rep, date('Ymd')));
+
+            // Now, insert him into the database :-).
+            //Phenotype
             $values = array(
-              'phenotype_id' => $phenotype_id,
-              'type_id' => $type_id,
-              'value' => $value
+              ':uniquename' => $uniquename,
+              ':attr_id' => $trait_id,
+              ':value' => $value,
+              ':project_id' => $project_id,
+              ':stock_id' => $stock_id,
             );
-            chado_insert_record('phenotypeprop', $values);
+            chado_query('INSERT INTO {phenotype} (uniquename, attr_id, value, project_id, stock_id) VALUES (:uniquename, :attr_id, :value, :project_id, :stock_id)',
+              $values);
+            $phenotype_id = chado_query('SELECT phenotype_id FROM {phenotype} WHERE uniquename=:uniquename AND attr_id=:attr_id AND value=:value AND project_id=:project_id AND stock_id=:stock_id',
+              $values)->fetchField();
+
+            // Phenotype Properties
+            $properties = array(
+              $type_ids['location'] => $location,
+              $type_ids['year'] => $year,
+              $type_ids['rep'] => $rep,
+            );
+            foreach ($properties as $type_id => $value) {
+              $values = array(
+                'phenotype_id' => $phenotype_id,
+                'type_id' => $type_id,
+                'value' => $value
+              );
+              chado_insert_record('phenotypeprop', $values);
+            }
           }
         }
       }
