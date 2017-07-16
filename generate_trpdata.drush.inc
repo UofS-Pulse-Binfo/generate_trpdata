@@ -755,6 +755,48 @@ function drush_generate_trpdata_generate_phenotypes() {
   }
 
   //--------------------
+  // Speed up the loading process.
+
+  // Drop all indexes on the table.
+  $indexes = array(
+    'phenotype_c1' => 'ALTER TABLE chado.phenotype ADD CONSTRAINT phenotype_c1 UNIQUE (uniquename)',
+    'phenotype_idx1' => 'CREATE INDEX chado.phenotype_idx1 ON phenotype (cvalue_id)',
+    'phenotype_idx2' => 'CREATE INDEX chado.phenotype_idx2 ON phenotype (observable_id)',
+    'phenotype_idx3' => 'CREATE INDEX chado.phenotype_idx3 ON phenotype (attr_id)',
+  );
+  //db_query('ALTER TABLE chado.phenotype DROP CONSTRAINT phenotype_c1');
+  foreach (array_keys($indexes) as $index_name) {
+    //db_query('DROP INDEX IF EXISTS chado.'.$index_name);
+  }
+
+  // To speed things up we are also using prepared queries for our
+  // phenotype measurements inserts. The following is the setup needed to
+  // use prepared queries with the Drupal DB API.
+  // Get the Drupal database connection and change the statement class to PDOStatement.
+  // Save the current class for cleanup later.
+  // ASSUMPTION: the chado database is in a schema named "chado".
+  $conn = Database::getConnection();
+  $saved_class = $conn->getAttribute(PDO::ATTR_STATEMENT_CLASS);
+  $conn->setAttribute(PDO::ATTR_STATEMENT_CLASS, array('PDOStatement'));
+
+  // Use a database transaction to stop autocommit.
+  //$conn->beginTransaction();
+
+  // Insert statement for the core measurement.
+  $insert_phenotype = $conn->prepare(
+      'INSERT INTO chado.phenotype
+        (uniquename, attr_id, value, project_id, stock_id)
+        VALUES (:uniquename, :attr_id, :value, :project_id, :stock_id)');
+  // Insert statement to add properties after the fact via select.
+  // It requires the type_id and value of the property to be inserted
+  // and inserts properties for all measurements without a property of the specified type.
+  $insert_phenotypeprops = $conn->prepare(
+   'INSERT INTO chado.phenotypeprop (phenotype_id, type_id, value)
+    SELECT phenotype_id, :type_id, :value
+    FROM chado.phenotype WHERE phenotype_id BETWEEN :start AND :end');
+  $get_phenotype_id = $conn->prepare('SELECT last_value FROM chado.phenotype_phenotype_id_seq');
+
+  //--------------------
   // Generate data
   // for each location, year, stock combination.
 
@@ -762,6 +804,9 @@ function drush_generate_trpdata_generate_phenotypes() {
   //print "\nDATASET:\nThe generated dataset will be printed below as well as inserted into the database.\n";
   //print implode("\t", array('Location', 'Year', 'Line', 'Mean', 'Min', 'Max', 'Std. Dev.')) . "\n";
   print "\nGenerating data for hypothetical phenotypic trial...\n";
+
+  // Use this file for copy functionality.
+  $unique_filename = '/tmp/generate_trpdata_phenotypes_'.uniqid().'.csv';
 
   foreach ($traits as $trait_id => $trait_name) {
     print $trait_name . "\n";
@@ -773,14 +818,26 @@ function drush_generate_trpdata_generate_phenotypes() {
 
     foreach ($locations as $location) {
       print "\t - $location\n";
+      $get_phenotype_id->execute();
+      $start_loc = current($get_phenotype_id->fetch());
+
       foreach ($years as $year) {
         print "\t\t - $year\n";
-        foreach ($stocks as $stock_id => $stock) {
+        $get_phenotype_id->execute();
+        $start_year = current($get_phenotype_id->fetch());
 
-          // Generate quantitate data.
-          $mean = trpdata_generate_random_number($min, $max, TRUE);
+        $means = array();
+        for($rep = 1; $rep <= 3; $rep++) {
 
-          for($rep = 1; $rep <= 3; $rep++) {
+          $get_phenotype_id->execute();
+          $start_rep = current($get_phenotype_id->fetch());
+          foreach ($stocks as $stock_id => $stock) {
+
+            // Generate quantitate data.
+            if ($rep == 1) {
+              $means[$stock_id] = trpdata_generate_random_number($min, $max, TRUE);
+            }
+            $mean = $means[$stock_id];
 
             $stock_name = $stock->name;
 
@@ -792,37 +849,42 @@ function drush_generate_trpdata_generate_phenotypes() {
             // Come up with a uniquename for this measurement.
             $uniquename = implode('_', array($trait_id, $project_id, $location, $year, $stock_id, $rep, date('Ymd')));
 
-            // Now, insert him into the database :-).
-            //Phenotype
-            $values = array(
+            // Phenotype
+            $insert_phenotype->execute(array(
               ':uniquename' => $uniquename,
               ':attr_id' => $trait_id,
               ':value' => $value,
               ':project_id' => $project_id,
               ':stock_id' => $stock_id,
-            );
-            chado_query('INSERT INTO {phenotype} (uniquename, attr_id, value, project_id, stock_id) VALUES (:uniquename, :attr_id, :value, :project_id, :stock_id)',
-              $values);
-            $phenotype_id = chado_query('SELECT phenotype_id FROM {phenotype} WHERE uniquename=:uniquename AND attr_id=:attr_id AND value=:value AND project_id=:project_id AND stock_id=:stock_id',
-              $values)->fetchField();
+            ));
+          } // End of insert data for each stock...
 
-            // Phenotype Properties
-            $properties = array(
-              $type_ids['location'] => $location,
-              $type_ids['year'] => $year,
-              $type_ids['rep'] => $rep,
-            );
-            foreach ($properties as $type_id => $value) {
-              $values = array(
-                'phenotype_id' => $phenotype_id,
-                'type_id' => $type_id,
-                'value' => $value
-              );
-              chado_insert_record('phenotypeprop', $values);
-            }
-          }
-        }
-      }
-    }
-  }
+          // Insert the replicate phenotype property.
+          $get_phenotype_id->execute();
+          $end_rep = current($get_phenotype_id->fetch());
+          $insert_phenotypeprops->execute(array(':type_id' => $type_ids['rep'], ':value' => $rep, ':start' => $start_rep+1, ':end' => $end_rep));
+        } // End of insert data for 3 replicates...
+
+        // Insert the year phenotype property.
+        $get_phenotype_id->execute();
+        $end_year = current($get_phenotype_id->fetch());
+        $insert_phenotypeprops->execute(array(':type_id' => $type_ids['year'], ':value' => $year, ':start' => $start_year+1, ':end' => $end_year));
+      } // End of insert data for each year...
+
+      // Insert the location phenotype property.
+      $get_phenotype_id->execute();
+      $end_loc = current($get_phenotype_id->fetch());
+      $insert_phenotypeprops->execute(array(':type_id' => $type_ids['location'], ':value' => $location, ':start' => $start_loc+1, ':end' => $end_loc));
+    } // End of insert data for each location...
+  } // End of insert data for each trait...
+
+  // Related to using prepared statements for inserting phenotype measurements.
+  // Revert the connection to its previous statement class.
+  $conn->setAttribute(PDO::ATTR_STATEMENT_CLASS, $saved_class);
+
+  // Finally update the materialized view if it exists.
+  //$mview_id = tripal_get_mview_id('mview_phenotype');
+  //if ($mview_id) {
+    //tripal_populate_mview($mview_id);
+  //}
 }
