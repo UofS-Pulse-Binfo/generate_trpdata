@@ -5,6 +5,20 @@
  */
 
 /**
+ *
+ */
+function trpdata_remote_copy($copy_command) {
+
+  $connection_string = `drush sql-connect`;
+  $connection_string = trim($connection_string);
+
+  $command = $connection_string . ' -c "\\' . $copy_command . '"';
+
+  return `$command`;
+
+}
+
+/**
  * Generates random numbers following a slightly skewed normal distribution
  */
 function trpdata_generate_random_number($min, $max, $is_float = TRUE) {

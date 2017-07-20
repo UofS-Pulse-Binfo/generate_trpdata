@@ -49,6 +49,7 @@ function generate_trpdata_drush_command() {
       'marker-type' => 'A free-text string to use as the marker type (Default=Cool Technology).',
       'load-mviews' => 'If present the ND Genotypes mview_ndg_variants and mviews_ndg_calls will be loaded as the data is generated (Default=FALSE).',
       'truncate-existing' => 'Provide this option to first remove all existing genotype, stock, feature data.',
+      'no-copy' => 'When present the PostgreSQL Copy command will NOT be used. The Copy command speeds up loading of large datasets and thus is used by default; however, it might not be compatible with some systems.'
     ),
   );
 
@@ -191,6 +192,7 @@ function drush_generate_trpdata_generate_genotypes() {
   $marker_type = drush_get_option('marker-type','Cool Technology');
   $load_mviews = drush_get_option('load-mviews', FALSE);
   $truncate = drush_get_option('truncate-existing', FALSE);
+  $no_copy = drush_get_option('no-copy', FALSE);
 
   $mview_calls_table = 'mview_ndg_tripalus_calls';
   $mview_variants_table = 'mview_ndg_tripalus_variants';
@@ -366,6 +368,7 @@ function drush_generate_trpdata_generate_genotypes() {
       'project_id' => $project_id,
       'marker_type' => $marker_type,
       'load mview' => $load_mviews,
+      'no copy' => $no_copy,
     );
     $feature_options = array_merge($options, $feature_options);
     generate_nd_markers($feature_options);
@@ -383,6 +386,7 @@ function drush_generate_trpdata_generate_genotypes() {
     'samples' => $samples,
     'genotype_ids' => $genotypes,
     'load mview' => $load_mviews,
+    'no copy' => $no_copy,
     'out_stub' => $out_stub,
   );
   $call_options = array_merge($options, $call_options);

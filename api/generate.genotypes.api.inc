@@ -14,6 +14,7 @@
  *     - samples: An array of samples as returned from generate_nd_samples() (Default=Generate 10 samples)
  *     - out-stub: the full path stub to create copy files with (Default=/tmp/massive_genotype_dataset.drush)
  *     - load mview: whether or not to load the new genotype calls into mview_ndg_calls (Default=FALSE)
+ *     - no copy: whether or not to use the COPY command to insert markers/variants (Default=FALSE)
  */
 function generate_nd_genotype_calls($options) {
   $copy_chunk_size = 50000;
@@ -24,13 +25,7 @@ function generate_nd_genotype_calls($options) {
   if (!isset($options['samples'])) $options['samples'] = generate_nd_samples(array('num' => 10, 'insert' => TRUE, 'generate germplasm' => TRUE));
   if (!isset($options['out_stub'])) $options['out_stub'] = '/tmp/massive_genotype_dataset.drush';
   if (!isset($options['load mview'])) $options['load mview'] = FALSE;
-
-  // Open the file for copying from.
-  $call_file = $options['out_stub'] . '.genotype_calls.csv';
-  $CALL = fopen($call_file, 'w');
-  $mview_file = $options['out_stub'] . '.mview_ndg_calls.csv';
-  $MVIEW = fopen($mview_file, 'w');
-  print " - Genotype calls...\n";
+  if (!isset($options['no copy'])) $options['no copy'] = FALSE;
 
   $options['expected_total'] = chado_query('SELECT count(*) FROM {project_feature} WHERE project_id=:project',
     array(':project' => $options['project_id']))->fetchField() * sizeof($options['samples']);
@@ -68,6 +63,46 @@ function generate_nd_genotype_calls($options) {
   if (sizeof($genotypes)) { drush_log(" - Ensuring all " . sizeof($genotypes).' SNP genotypes are available.', 'success'); }
   else { return drush_set_error("   - Unable to find or insert genotypes."); }
 
+  // If "no nopy" then we want to use prepared statements to speed the process
+  // up as much as possible.
+  if ($options['no copy']) {
+
+    // The following is the setup needed to
+    // use prepared queries with the Drupal DB API.
+    // Get the Drupal database connection and change the statement class to PDOStatement.
+    // Save the current class for cleanup later.
+    // ASSUMPTION: the chado database is in a schema named "chado".
+    $conn = Database::getConnection();
+    $saved_class = $conn->getAttribute(PDO::ATTR_STATEMENT_CLASS);
+    $conn->setAttribute(PDO::ATTR_STATEMENT_CLASS, array('PDOStatement'));
+
+    // Insert statement for the genotype call.
+    $insert_call = $conn->prepare(
+      'INSERT INTO chado.genotype_call
+        (variant_id, marker_id, genotype_id, project_id, stock_id)
+        VALUES (:variant_id, :marker_id, :genotype_id, :project_id, :stock_id)');
+
+    // Insert statement for the materialized view.
+    // @todo remove hard-coding of the mview name.
+    $insert_mview = $conn->prepare(
+      'INSERT INTO chado.mview_ndg_tripalus_calls
+        (variant_id, marker_id, marker_name, marker_type, genotype_id,
+          allele_call, project_id, stock_id, stock_name, germplasm_id, germplasm_name)
+        VALUES (:variant_id, :marker_id, :marker_name, :marker_type, :genotype_id,
+          :allele_call, :project_id, :stock_id, :stock_name, :germplasm_id, :germplasm_name)');
+
+  }
+  // Otherwise, the default is to use the COPY command which requires saving
+  // data to files before slurping them into the database in chunks.
+  // Here we open the files we are going to save the data to temporarily.
+  else {
+    $call_file = $options['out_stub'] . '.genotype_calls.csv';
+    $CALL = fopen($call_file, 'w');
+    $mview_file = $options['out_stub'] . '.mview_ndg_calls.csv';
+    $MVIEW = fopen($mview_file, 'w');
+  }
+  print " - Genotype calls...\n";
+
   //=======================
   // Now grab each marker...
   $rel_type_id = $options['cvterm']['is_marker_of'];
@@ -87,9 +122,23 @@ function generate_nd_genotype_calls($options) {
             LEFT JOIN {feature_relationship} fr ON fr.subject_id=pf.feature_id AND fr.type_id=:reltype
             WHERE project_id=:project";
   }
-  $resource = chado_query($sql, $args);
+  // Since prepared statements make us step back from the Drupal abstraction
+  // we need to change how we execute all queries when using the no-copy method.
+  if ($options['no copy']) {
+    // Remove the {tablename}.
+    $sql = preg_replace('/\{(\w+)\}/','chado.\\1', $sql);
+    // Apparently you cannot poass arguements to PDO::query() and thus
+    // you have to use prepared queries even if only using it once :-(.
+    $resource = $conn->prepare($sql);
+    $resource->setFetchMode(PDO::FETCH_OBJ);
+    $resource->execute($args);
+
+  }
+  else {
+    $resource = chado_query($sql, $args);
+  }
   $num_markers = 0;
-  foreach ($resource as $r) {
+  while ($r = $resource->fetch()) {
     $num_markers++;
 
     // Pick a random two alleles.
@@ -115,34 +164,55 @@ function generate_nd_genotype_calls($options) {
 
       //--------------------
       // genotype_call.
-      fputcsv($CALL, array(
-        $r->variant_id, // variant_id
-        $r->marker_id, // marker_id
-        $genotypes[ $call ], //genotype_id
-        $options['project_id'],  // project_id
-        $sample_id,  // stock_id
-      ));
+      $genotype_call = array(
+        ':variant_id' => $r->variant_id,
+        ':marker_id' => $r->marker_id,
+        ':genotype_id' => $genotypes[ $call ],
+        ':project_id' => $options['project_id'],
+        ':stock_id' => $sample_id,
+      );
 
-      if ($options['load mview']) {
-          fputcsv($MVIEW, array(
-            $r->variant_id, // variant_id
-            $r->marker_id, // marker_id
-            $r->marker_name, // marker_name
-            $r->marker_type, // marker type
-            $sample_id, // stock_id
-            $sample['sample']->name, // stock_name
-            $sample['germplasm']->stock_id,// germplasm_id
-            $sample['germplasm']->name,// germplasm_name
-            $options['project_id'], // project_id
-            $genotypes[ $call ], // genotype_id
-            $call, // allele_call
-          ));
+      $mview = array(
+        ':variant_id' => $r->variant_id,
+        ':marker_id' => $r->marker_id,
+        ':marker_name' => $r->marker_name,
+        ':marker_type' => $r->marker_type,
+        ':stock_id' => $sample_id,
+        ':stock_name' => $sample['sample']->name,
+        ':germplasm_id' => $sample['germplasm']->stock_id,
+        ':germplasm_name' => $sample['germplasm']->name,
+        ':project_id' => $options['project_id'],
+        ':genotype_id' => $genotypes[ $call ],
+        ':allele_call' => $call,
+      );
 
+      // Depending upon our method...
+      // Either use the prepared statements if 'no copy' was specified.
+      if ($options['no copy']) {
+
+        $insert_call->execute($genotype_call);
+        if ($options['load mview']) {
+          $insert_mview->execute($mview);
+        }
+
+        // Report progress?
+        if ($num%$copy_chunk_size == 0) {
+          drush_log(' - Saved '.number_format($num).' calls so far (all samples for '.number_format($num_markers).' markers).', 'success');
+        }
       }
+      // Or use the copy method.
+      else {
 
-      // If we have reached the size of a chunk then go ahead and copy it into the db.
-      if ($num%$copy_chunk_size == 0) {
-        $time_to_copy = TRUE;
+        // Save data to the appropriate files...
+        fputcsv($CALL, $call);
+        if ($options['load mview']) {
+          fputcsv($MVIEW, $mview);
+        }
+
+        // If we have reached the size of a chunk then go ahead and copy it into the db.
+        if ($num%$copy_chunk_size == 0) {
+          $time_to_copy = TRUE;
+        }
       }
     }
 
@@ -163,13 +233,21 @@ function generate_nd_genotype_calls($options) {
 
   }
 
-  // Copy in any remaining records.
-  fclose($CALL); fclose($MVIEW);
-  trpdata_remote_copy("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV");
-  drush_log(' - Complete! Saved a total of '.number_format($num).' calls to the genotype_call table.', 'success');
-  if ($options['load mview']) {
-    trpdata_remote_copy("COPY chado.mview_ndg_tripalus_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV");
-    drush_log(' - Complete! Saved a total of '.number_format($num).' calls to the mview_ndg_tripalus_calls table.', 'success');
+  // Last of all, we need to clean-up.
+  // If, 'no copy' was specified then we need to revert the connection to
+  // its previous statement class.
+  if ($options['no copy']) {
+    $conn->setAttribute(PDO::ATTR_STATEMENT_CLASS, $saved_class);
+  }
+  // Otherwise, we need to close the copy files and copy in the last chunk.
+  else {
+    fclose($CALL); fclose($MVIEW);
+    trpdata_remote_copy("COPY chado.genotype_call (variant_id, marker_id, genotype_id, project_id, stock_id) FROM '$call_file' WITH CSV");
+    drush_log(' - Complete! Saved a total of '.number_format($num).' calls to the genotype_call table.', 'success');
+    if ($options['load mview']) {
+      trpdata_remote_copy("COPY chado.mview_ndg_tripalus_calls (variant_id, marker_id, marker_name, marker_type, stock_id, stock_name, germplasm_id, germplasm_name, project_id, genotype_id, allele_call) FROM '$mview_file' WITH CSV");
+      drush_log(' - Complete! Saved a total of '.number_format($num).' calls to the mview_ndg_tripalus_calls table.', 'success');
+    }
   }
 }
 
@@ -208,6 +286,7 @@ function pick_random_allele($allele_frequencies) {
  *     - marker_type: the free-text string describing the type of marker (Default=Cool Technology)
  *     - marker_stub: the suffix to add to variant names to make marker uniquenames (Default=[sanitized_marker_type]_[date])
  *     - load mview: whether or not to load the new variants into mview_ndg_variants (Default=FALSE)
+ *     - no copy: whether or not to use the COPY command to insert markers/variants (Default=FALSE)
  */
 function generate_nd_markers($options) {
   $copy_chunk_size = 50000;
@@ -221,6 +300,7 @@ function generate_nd_markers($options) {
   if (!isset($options['marker_type'])) $options['marker_type'] = 'Cool Technology';
   if (!isset($options['marker_stub'])) $options['marker_stub'] = strtolower(str_replace(' ','_', $options['marker_type'])) . '_' . date('YMd');
   if (!isset($options['load mview'])) $options['load mview'] = FALSE;
+  if (!isset($options['no copy'])) $options['no copy'] = FALSE;
 
   $options['expected_total'] = $options['num_per_chr'] * 2; // *2 because there are both markers and variants.
 
@@ -234,20 +314,80 @@ function generate_nd_markers($options) {
   $prop_type_id = $options['cvterm']['marker_type'];
   $options['prop_type_id'] = $prop_type_id;
 
-  // COPY File for feature table.
-  $feature_file = $options['out_stub'] . '.feature.csv';
-  $FEATURE = fopen($feature_file, 'w');
-  // COPY file for featureloc table.
-  // We need two because our marker and variant feature_ids are in separate
-  // files and cannot be interleaved like these locations would be.
-  $featurelocV_file = $feature_file . '.variants.featureloc.csv';
-  $LOCV = fopen($featurelocV_file, 'w');
-  $featurelocM_file = $feature_file . '.markers.featureloc.csv';
-  $LOCM = fopen($featurelocM_file, 'w');
-  // COPY file for mview_ndg_variants file.
-  // We only need one here since it's only the variant feature_id that we need :-).
-  $mview_file = $feature_file . '.variants.mview_ndg_variants.csv';
-  $MVIEW = fopen($mview_file, 'w');
+  // If "no nopy" then we want to use prepared statements to speed the process
+  // up as much as possible.
+  if ($options['no copy']) {
+
+    // The following is the setup needed to
+    // use prepared queries with the Drupal DB API.
+    // Get the Drupal database connection and change the statement class to PDOStatement.
+    // Save the current class for cleanup later.
+    // ASSUMPTION: the chado database is in a schema named "chado".
+    $conn = Database::getConnection();
+    $saved_class = $conn->getAttribute(PDO::ATTR_STATEMENT_CLASS);
+    $conn->setAttribute(PDO::ATTR_STATEMENT_CLASS, array('PDOStatement'));
+
+    // Insert statement for the variants & markers.
+    $insert_feature = $conn->prepare(
+      'INSERT INTO chado.feature
+        (organism_id, name, uniquename, type_id)
+        VALUES (:organism_id, :name, :uniquename, :type_id)');
+
+    // Retrieve the feature_id of the last entered feature
+    $get_feature_id = $conn->prepare('SELECT last_value FROM chado.feature_feature_id_seq');
+
+    // Insert statement for project_feature.
+    // Needed to attach genotype calls later!
+    $insert_project = $conn->prepare(
+      'INSERT INTO chado.project_feature
+        (project_id, feature_id)
+        VALUES (:project_id, :feature_id)');
+
+    // Insert statement for feature properties.
+    $insert_featureprop = $conn->prepare(
+      'INSERT INTO chado.featureprop
+        (feature_id, type_id, value)
+        VALUES (:feature_id, :type_id, :value)');
+
+    // Insert statement for feature locations.
+    $insert_featureloc = $conn->prepare(
+      'INSERT INTO chado.featureloc
+        (srcfeature_id, feature_id, fmin, fmax)
+        VALUES (:srcfeature_id, :feature_id, :fmin, :fmax)');
+
+    // Insert statement for feature relationship.
+    $insert_feature_rel = $conn->prepare(
+      'INSERT INTO chado.feature_relationship
+        (subject_id, type_id, object_id)
+        VALUES (:marker_id, :type_id, :variant_id)');
+
+    // Insert Statement for the materialized view.
+    // @todo remove hard-coding of the mview name.
+    $insert_mview = $conn->prepare(
+      'INSERT INTO chado.mview_ndg_tripalus_variants
+        (variant_id, variant_name, srcfeature_id, srcfeature_name, fmin, fmax)
+        VALUES (:variant_id, :variant_name, :srcfeature_id, :srcfeature_name, :fmin, :fmax)');
+
+  }
+  // Otherwise, the default is to use the COPY command which requires saving
+  // data to files before slurping them into the database in chunks.
+  // Here we open the files we are going to save the data to temporarily.
+  else {
+    // COPY File for feature table.
+    $feature_file = $options['out_stub'] . '.feature.csv';
+    $FEATURE = fopen($feature_file, 'w');
+    // COPY file for featureloc table.
+    // We need two because our marker and variant feature_ids are in separate
+    // files and cannot be interleaved like these locations would be.
+    $featurelocV_file = $feature_file . '.variants.featureloc.csv';
+    $LOCV = fopen($featurelocV_file, 'w');
+    $featurelocM_file = $feature_file . '.markers.featureloc.csv';
+    $LOCM = fopen($featurelocM_file, 'w');
+    // COPY file for mview_ndg_variants file.
+    // We only need one here since it's only the variant feature_id that we need :-).
+    $mview_file = $feature_file . '.variants.mview_ndg_variants.csv';
+    $MVIEW = fopen($mview_file, 'w');
+  }
 
   // Now generate variants/markers for that chromosome.
   $options['observed_total'] = 0;
@@ -256,64 +396,151 @@ function generate_nd_markers($options) {
     // Determine the current position and marker name.
     $offset = rand(1,99);
     $pos = $pos + $offset;
-    $variant = $options['chr'] . 'p' . $pos;
-    $marker = $options['chr'] . 'p' . $pos . '_' . $options['marker_stub'];
+    $variant_name = $options['chr'] . 'p' . $pos;
+    $marker_name = $options['chr'] . 'p' . $pos . '_' . $options['marker_stub'];
 
-    // One line for the variant.
-    fputcsv($FEATURE, array(
-      $options['organism_id'], // organism_id
-      $variant, // name
-      $variant, // uniquename
-      $variant_type_id, // type_id
-    ));
-    // And one line for the marker.
-    fputcsv($FEATURE, array(
-      $options['organism_id'], // organism_id
-      $variant, // name
-      $marker, // uniquename
-      $marker_type_id, // type_id
-    ));
+    // Create a values array for each feature record...
+    $variant = array(
+      ':organism_id' => $options['organism_id'],
+      ':name' => $variant_name,
+      ':uniquename' => $variant_name,
+      ':type_id' => $variant_type_id,
+    );
+    $marker = array(
+      ':organism_id' => $options['organism_id'],
+      ':name' => $variant_name,
+      ':uniquename' => $marker_name,
+      ':type_id' => $marker_type_id,
+    );
 
-    // Now locations (Not ready to copy in at this point, need feature_ids added later.
-    // One line for the variant.
-    fputcsv($LOCV, array(
-      $options['chr_id'], // srcfeature_id
-      $pos-1, // fmin
-      $pos, // fmax
-    ));
-    // And one line for the marker.
-    fputcsv($LOCM, array(
-      $options['chr_id'], // srcfeature_id
-      $pos-1, // fmin
-      $pos, // fmax
-    ));
+    // Then Properties (Not ready to copy in at this point, need feature_ids added later).
+    $variantprop = array(
+      ':type_id' => $options['cvterm']['marker_type'],
+      ':value' => 'SNP',
+    );
+    $markerprop = array(
+      ':type_id' => $options['cvterm']['marker_type'],
+      ':value' => $options['marker_type'],
+    );
 
-    // Now mview (Not ready to copy in at this point, need variant feature_ids added later.
-    if ($options['load mview']) {
-      fputcsv($MVIEW, array(
-        $variant, // variant_name
-        $options['chr_id'], // srcfeature_id
-        $options['chr'], // srcfeature_name
-        $pos-1, // fmin
-        $pos, // fmax
-      ));
+    // Now locations (Not ready to copy in at this point, need feature_ids added later).
+    $variant_loc = array(
+      ':srcfeature_id' => $options['chr_id'],
+      ':fmin' => $pos-1,
+      ':fmax' => $pos,
+    );
+    $marker_loc = array(
+      ':srcfeature_id' => $options['chr_id'],
+      ':fmin' => $pos-1,
+      ':fmax' => $pos,
+    );
+
+    // Relationship between them (Not ready to copy in at this point, need variant feature_ids added later)...
+    $rel = array(
+      ':type_id' => $options['cvterm']['is_marker_of'],
+    );
+
+    $project = array(
+      ':project_id' => $options['project_id'],
+    );
+
+    // Now mview (Not ready to copy in at this point, need variant feature_ids added later).
+    $mview = array(
+      ':variant_name' => $variant,
+      ':srcfeature_id' => $options['chr_id'],
+      ':srcfeature_name' => $options['chr'],
+      ':fmin' => $pos-1,
+      ':fmax' => $pos,
+    );
+
+    // Finally, depending upon our method...
+    // Either use the prepared statements if 'no copy' was specified.
+    if ($options['no copy']) {
+
+      // Variant.
+      $insert_feature->execute($variant);
+      $get_feature_id->execute();
+      $variant_id = current($get_feature_id->fetch());
+
+      // Variant Property?
+      $variantprop[':feature_id'] = $variant_id;
+      $insert_featureprop->execute($variantprop);
+
+      // Marker.
+      $insert_feature->execute($marker);
+      $get_feature_id->execute();
+      $marker_id = current($get_feature_id->fetch());
+
+      // Marker Propery.
+      $markerprop[':feature_id'] = $marker_id;
+      $insert_featureprop->execute($markerprop);
+
+      // Locations.
+      $variant_loc[':feature_id'] = $variant_id;
+      $insert_featureloc->execute($variant_loc);
+      $marker_loc[':feature_id'] = $marker_id;
+      $insert_featureloc->execute($marker_loc);
+
+      // Relationship.
+      $rel[':variant_id'] = $variant_id;
+      $rel[':marker_id'] = $marker_id;
+      $insert_feature_rel->execute($rel);
+
+      // Relationship.
+      $project[':feature_id'] = $marker_id;
+      $insert_project->execute($project);
+
+      // Mview.
+      if ($options['load mview']) {
+        $mview[':variant_id'] = $variant_id;
+        $insert_mview->execute($mview);
+      }
+
+      // Report progress?
+      if ($num%$copy_chunk_size == 0) {
+        drush_log("   - Generated ".number_format($num)." markers and variants.",'success');
+      }
+
     }
+    // Or use the copy method.
+    else {
 
-    // If we have reached the size of a chunk then go ahead and copy it into the db.
-    if ($num%$copy_chunk_size == 0) {
-      fclose($FEATURE); fclose($LOCM); fclose($LOCV); fclose($MVIEW);
+      // Save data to the appropriate files...
+      fputcsv($FEATURE, $variant);
+      fputcsv($FEATURE, $marker);
+      fputcsv($LOCV, $variant_loc);
+      fputcsv($LOCM, $marker_loc);
 
-      _generate_nd_markers_copy_helper($options, $feature_file);
+      if ($options['load mview']) {
+        fputcsv($MVIEW, $mview);
+      }
 
-      $FEATURE = fopen($feature_file, 'w');
-      $LOCV = fopen($featurelocV_file, 'w');
-      $LOCM = fopen($featurelocM_file, 'w');
-      $MVIEW = fopen($mview_file, 'w');
+      // If we have reached the size of a chunk then go ahead and copy it into the db.
+      if ($num%$copy_chunk_size == 0) {
+        fclose($FEATURE); fclose($LOCM); fclose($LOCV); fclose($MVIEW);
+
+        _generate_nd_markers_copy_helper($options, $feature_file);
+
+        $FEATURE = fopen($feature_file, 'w');
+        $LOCV = fopen($featurelocV_file, 'w');
+        $LOCM = fopen($featurelocM_file, 'w');
+        $MVIEW = fopen($mview_file, 'w');
+      }
     }
 
   }
-  fclose($FEATURE); fclose($LOCM); fclose($LOCV); fclose($MVIEW);
-  _generate_nd_markers_copy_helper($options, $feature_file);
+
+  // Last of all, we need to clean-up.
+  // If, 'no copy' was specified then we need to revert the connection to
+  // its previous statement class.
+  if ($options['no copy']) {
+    $conn->setAttribute(PDO::ATTR_STATEMENT_CLASS, $saved_class);
+  }
+  // Otherwise, we need to close the copy files and copy in the last chunk.
+  else {
+    fclose($FEATURE); fclose($LOCM); fclose($LOCV); fclose($MVIEW);
+    _generate_nd_markers_copy_helper($options, $feature_file);
+  }
 }
 
 function _generate_nd_markers_copy_helper(&$options, $feature_file) {
@@ -476,17 +703,4 @@ function generate_nd_samples($options) {
   }
 
   return $stocks;
-}
-
-/**
- *
- */
-function trpdata_remote_copy($copy_command) {
-
-  $connection_string = `drush sql-connect`;
-  $connection_string = trim($connection_string);
-
-  $command = $connection_string . ' -c "\\' . $copy_command . '"';
-  return `$command`;
-
 }
