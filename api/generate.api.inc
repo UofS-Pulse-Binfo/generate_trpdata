@@ -9,12 +9,13 @@
  */
 function trpdata_remote_copy($copy_command) {
 
-  $connection_string = `drush sql-connect`;
-  $connection_string = trim($connection_string);
-
-  $command = $connection_string . ' -c "\\' . $copy_command . '"';
-
-  return `$command`;
+  // Execute the command within a drush created psql session using \COPY.
+  return drush_invoke_process(
+    '@self',
+    'sql-cli',
+    array(),
+    array('extra' => '--command="\\'.$copy_command.'"')
+  );
 
 }
 
@@ -59,6 +60,87 @@ function trpdata_generate_random_string($length = 10) {
 
   return $randomString;
 
+}
+
+/**
+ * Generates a random sequence.
+ */
+function trpdata_generate_random_sequence($length = 500, $type = 'DNA') {
+
+  if ($type == 'Protein') {
+    $characters = 'ABCDEFGHIJKLMNOPQRSTUVWYZ';
+  }
+  else {
+    $characters = 'ATGC';
+  }
+  $charactersLength = strlen($characters);
+
+  $randomString = '';
+  for ($i = 0; $i < $length; $i++) {
+    $randomString .= $characters[rand(0, $charactersLength - 1)];
+  }
+
+  return $randomString;
+
+}
+
+/**
+ * Generates random sequence for a given feature.
+ *
+ * @param $feature_uniquename
+ *   The uniquename of the feature to generate sequence for.
+ * @param $options
+ *   An array of options
+ *     - type: Either "DNA" or "Protein" to indicate which type of sequence to create.
+ *     - length: Generate a specific length of sequence. Default is to use the
+ *         featureloc table to determine the length of sequence.
+ */
+function trpdata_generate_feature_sequence($feature_uniquename, $options) {
+
+  // Set Defaults:
+  if (!isset($options['type'])) { $options['type'] = "DNA"; }
+  if (!isset($options['length'])) { $options['length'] = FALSE; }
+
+  // Look up the feature.
+  $feature = chado_select_record('feature', array('feature_id'), array('uniquename' => $feature_uniquename));
+  if (!empty($feature)) {
+    $feature_id = $feature[0]->feature_id;
+  }
+  else {
+    return drush_set_error('Unable to find a feature with the specified uniquename.');
+  }
+  print "Feature ID: $feature_id.\n";
+
+  // If the sequence length was not supplied then:
+  // Determine the length of sequence to generate based on the featureloc table.
+  if ($options['length'] === FALSE) {
+    $max_fmax = chado_query(
+      'SELECT max(fmax) as max FROM {featureloc} WHERE srcfeature_id=:id',
+      array(':id' => $feature_id))->fetchField();
+    if ($max_fmax) {
+      $options['length'] = $max_fmax + 150;
+    }
+    else {
+      $options['length'] = 500;
+    }
+  }
+  else {
+    $options['length'] = 500;
+  }
+
+  // Now generate the sequence.
+  $sequence = trpdata_generate_random_sequence($options['length'], $options['type']);
+
+  if ($sequence) {
+    chado_update_record(
+      'feature',
+      array('feature_id' => $feature_id),
+      array('residues' => $sequence, 'seqlen' => $options['length'])
+    );
+  }
+  else {
+    return drush_set_error('Unable to generate sequence for '.$feature_uniquename);
+  }
 }
 
 /**

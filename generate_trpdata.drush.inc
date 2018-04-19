@@ -9,6 +9,20 @@
 function generate_trpdata_drush_command() {
   $items = array();
 
+  $items['generate-sequence'] = array(
+    'description' => 'Generate sequence for a given chado feature.',
+    'aliases' => array('gen-seq'),
+    'examples' => array(
+      'drush gen-seq Chr1' => 'Generates DNA sequence for the feature with the uniquename "Chr1". Specifically, it generates enough residues to provide sequence for all features located on this feature and if no features are located on this feature then it defaults to 500 residues.',
+    ),
+    'arguments' => array(
+      'uniquename' => 'The uniquename of the feature you would like sequence generated for.'
+    ),
+    'options' => array(
+      'type' => 'Either "DNA" or "Protein" to indicate the type of sequence you would like generated (Default=DNA).'
+    ),
+  );
+
   $items['generate-stocks'] = array(
     'description' => 'Generate chado stocks (saved directly to database). Use --print-names if you would like the names and stock_ids of the stocks created ;-).',
     'aliases' => array('gen-stock'),
@@ -96,6 +110,22 @@ function generate_trpdata_drush_command() {
   );
 
   return $items;
+}
+
+/**
+ * Drush Command: Generate Sequence.
+ */
+function drush_generate_trpdata_generate_sequence($uniquename) {
+
+  require_once('api/generate.api.inc');
+
+  // Retrieve options.
+  $options = array();
+  $options['type'] = drush_get_option('type', 'DNA');
+  $options['length'] = drush_get_option('length', FALSE);
+
+  // Then generate the sequence using the API.
+  return trpdata_generate_feature_sequence($uniquename, $options);
 }
 
 /**
@@ -227,8 +257,10 @@ function drush_generate_trpdata_generate_genotypes() {
     chado_query('TRUNCATE {feature} CASCADE');
     chado_query('TRUNCATE {stock} CASCADE');
     chado_query('TRUNCATE {project} CASCADE');
-    chado_query('TRUNCATE {'.$mview_variants_table.'}');
-    chado_query('TRUNCATE {'.$mview_calls_table.'}');
+    if ($load_mviews) {
+      chado_query('TRUNCATE {'.$mview_variants_table.'}');
+      chado_query('TRUNCATE {'.$mview_calls_table.'}');
+    }
   }
 
   //--------------------

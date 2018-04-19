@@ -63,12 +63,11 @@ cut -d, -f3 $MARKER_FILE | sed -e :a -e "$!N; s/\n/', '/; ta" > $MARKERNAMES_LIS
 echo "SELECT feature_id " > $TMP_QUERY
 echo "  FROM unnest(ARRAY['$(<$MARKERNAMES_LIST)']) uniquename ">> $TMP_QUERY
 echo "  JOIN chado.feature f USING (uniquename) " >> $TMP_QUERY
-echo "  WHERE f.type_id=$TYPE AND f.organism_id=$ORGANISM;" >> $TMP_QUERY
+echo "  WHERE f.type_id=$TYPE AND f.organism_id=$ORGANISM" >> $TMP_QUERY
 
 # Execute the query we just generated and save the feature_ids into a file.
 #echo -n "      - Grabbing the marker feature_ids: ";
-PSQL="$(drush sql-connect)"
-$PSQL --no-align --tuples-only < $TMP_QUERY > $MARKER_IDS
+drush sql-query --extra='--no-align --tuples-only --command="\COPY ($(cat $TMP_QUERY)) TO $MARKER_IDS"'
 #wc -l $MARKER_IDS | cut -f1 -d' '
 
 ## COMPOSE COPY FILES
@@ -112,8 +111,7 @@ echo "  WHERE f.type_id=$VTYPE AND f.organism_id=$ORGANISM;" >> $TMP_QUERY
 
 # Execute the query we just generated and save the feature_ids into a file.
 #echo -n "      - Grabbing the variant feature_ids: ";
-PSQL="$(drush sql-connect)"
-$PSQL --no-align --tuples-only < $TMP_QUERY > $VARIANT_IDS
+drush sql-query --extra='--no-align --tuples-only --command="\COPY ($(cat $TMP_QUERY)) TO $VARIANT_IDS"'
 #wc -l $VARIANT_IDS | cut -f1 -d' '
 
 # Feature Location file: locate the features on the chromosome.

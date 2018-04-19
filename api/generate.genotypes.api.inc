@@ -103,6 +103,8 @@ function generate_nd_genotype_calls($options) {
   }
   print " - Genotype calls...\n";
 
+  drush_print("Memory: ".memory_get_usage());
+
   //=======================
   // Now grab each marker...
   $rel_type_id = $options['cvterm']['is_marker_of'];
@@ -127,7 +129,7 @@ function generate_nd_genotype_calls($options) {
   if ($options['no copy']) {
     // Remove the {tablename}.
     $sql = preg_replace('/\{(\w+)\}/','chado.\\1', $sql);
-    // Apparently you cannot poass arguements to PDO::query() and thus
+    // Apparently you cannot pass arguements to PDO::query() and thus
     // you have to use prepared queries even if only using it once :-(.
     $resource = $conn->prepare($sql);
     $resource->setFetchMode(PDO::FETCH_OBJ);
@@ -138,8 +140,11 @@ function generate_nd_genotype_calls($options) {
     $resource = chado_query($sql, $args);
   }
   $num_markers = 0;
+  drush_print("Memory (before while): ".memory_get_usage());
   while ($r = $resource->fetch()) {
     $num_markers++;
+
+    drush_print("Memory (ea. iteration): ".memory_get_usage());
 
     // Pick a random two alleles.
     $SNP = array_rand($options['alleles'], 2);
